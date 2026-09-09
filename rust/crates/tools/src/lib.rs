@@ -1638,13 +1638,17 @@ fn spawn_agent_job(mut job: AgentJob) -> Result<(), String> {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 run_agent_job(&mut job)
             }));
-            if result.is_err() {
+            if result.is_err() || !job.lifecycle.is_terminal() {
                 let _ = persist_agent_terminal_state(
                     &job.manifest,
                     &mut job.lifecycle,
                     AgentStatus::Failed,
                     None,
-                    Some(String::from("sub-agent thread panicked")),
+                    Some(if result.is_err() {
+                        String::from("sub-agent thread panicked")
+                    } else {
+                        String::from("sub-agent execution failed")
+                    }),
                 );
             }
         })
