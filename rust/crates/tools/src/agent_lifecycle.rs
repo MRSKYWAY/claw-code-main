@@ -112,13 +112,32 @@ pub struct AgentCoordinator {
 impl AgentCoordinator {
     #[must_use]
     pub fn new(limit: usize) -> Self {
-        Self { active: Mutex::new(0), limit: limit.max(1) }
+        Self {
+            active: Mutex::new(0),
+            limit: limit.max(1),
+        }
+    }
+
+    #[must_use]
+    pub fn configured_from_env() -> Self {
+        let limit = std::env::var("CLAW_MAX_PARALLEL_AGENTS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| (1..=8).contains(value))
+            .unwrap_or(2);
+        Self::new(limit)
     }
 
     pub fn try_acquire(&self) -> Result<AgentPermit<'_>, String> {
-        let mut active = self.active.lock().map_err(|_| String::from("agent coordinator lock poisoned"))?;
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| String::from("agent coordinator lock poisoned"))?;
         if *active >= self.limit {
-            return Err(format!("agent coordinator is at capacity ({}); wait for an active agent", self.limit));
+            return Err(format!(
+                "agent coordinator is at capacity ({}); wait for an active agent",
+                self.limit
+            ));
         }
         *active += 1;
         Ok(AgentPermit { coordinator: self })
@@ -149,7 +168,10 @@ pub fn atomic_write(path: &Path, contents: &str) -> io::Result<()> {
 
     let tmp_path = unique_temp_path(path);
     let result = (|| {
-        let mut file = OpenOptions::new().create_new(true).write(true).open(&tmp_path)?;
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp_path)?;
         file.write_all(contents.as_bytes())?;
         file.sync_all()?;
         drop(file);
@@ -164,8 +186,14 @@ pub fn atomic_write(path: &Path, contents: &str) -> io::Result<()> {
 }
 
 fn unique_temp_path(path: &Path) -> PathBuf {
-    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
-    let stem = path.file_name().and_then(|name| name.to_str()).unwrap_or("agent-state");
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let stem = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("agent-state");
     path.with_file_name(format!(".{stem}.{nanos}.tmp"))
 }
 
@@ -177,7 +205,10 @@ mod tests {
     use std::thread;
 
     fn temp_path(name: &str) -> std::path::PathBuf {
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("time").as_nanos();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
         std::env::temp_dir().join(format!("claw-agent-lifecycle-{nanos}-{name}"))
     }
 
@@ -185,17 +216,28 @@ mod tests {
     fn lifecycle_transitions_are_explicit() {
         let mut lifecycle = AgentLifecycle::new();
         assert_eq!(lifecycle.status(), AgentStatus::Queued);
-        lifecycle.transition(AgentStatus::Running).expect("queued -> running");
-        lifecycle.transition(AgentStatus::Succeeded).expect("running -> succeeded");
+        assert!(!lifecycle.is_terminal());
+        lifecycle
+            .transition(AgentStatus::Running)
+            .expect("queued -> running");
+        lifecycle
+            .transition(AgentStatus::Succeeded)
+            .expect("running -> succeeded");
         assert!(lifecycle.is_terminal());
     }
 
     #[test]
     fn lifecycle_rejects_terminal_revival() {
         let mut lifecycle = AgentLifecycle::new();
-        lifecycle.transition(AgentStatus::Running).expect("queued -> running");
-        lifecycle.transition(AgentStatus::Failed).expect("running -> failed");
-        let error = lifecycle.transition(AgentStatus::Running).expect_err("terminal state must not revive");
+        lifecycle
+            .transition(AgentStatus::Running)
+            .expect("queued -> running");
+        lifecycle
+            .transition(AgentStatus::Failed)
+            .expect("running -> failed");
+        let error = lifecycle
+            .transition(AgentStatus::Running)
+            .expect_err("terminal state must not revive");
         assert_eq!(error.from(), AgentStatus::Failed);
         assert_eq!(error.to(), AgentStatus::Running);
     }
@@ -203,8 +245,21 @@ mod tests {
     #[test]
     fn lifecycle_allows_queued_cancellation() {
         let mut lifecycle = AgentLifecycle::new();
-        lifecycle.transition(AgentStatus::Cancelled).expect("queued -> cancelled");
+        lifecycle
+            .transition(AgentStatus::Cancelled)
+            .expect("queued -> cancelled");
         assert!(lifecycle.is_terminal());
+    }
+
+    #[test]
+    fn coordinator_reads_bounded_env_limit() {
+        let coordinator = AgentCoordinator::new(2);
+        let first = coordinator.try_acquire().expect("first slot");
+        let second = coordinator.try_acquire().expect("second slot");
+        assert!(coordinator.try_acquire().is_err());
+        drop(second);
+        drop(first);
+        assert_eq!(coordinator.active_count(), 0);
     }
 
     #[test]
@@ -221,11 +276,16 @@ mod tests {
     #[test]
     fn coordinator_is_safe_across_threads() {
         let coordinator = Arc::new(AgentCoordinator::new(2));
-        let workers = (0..8).map(|_| {
-            let coordinator = Arc::clone(&coordinator);
-            thread::spawn(move || coordinator.try_acquire().is_ok())
-        }).collect::<Vec<_>>();
-        let results = workers.into_iter().map(|worker| worker.join().expect("worker")).collect::<Vec<_>>();
+        let workers = (0..8)
+            .map(|_| {
+                let coordinator = Arc::clone(&coordinator);
+                thread::spawn(move || coordinator.try_acquire().is_ok())
+            })
+            .collect::<Vec<_>>();
+        let results = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("worker"))
+            .collect::<Vec<_>>();
         assert!(results.iter().any(|acquired| *acquired));
     }
 
@@ -237,7 +297,10 @@ mod tests {
         atomic_write(&path, "first").expect("first write");
         atomic_write(&path, "second").expect("replacement write");
         assert_eq!(fs::read_to_string(&path).expect("read file"), "second");
-        let tmp_files = fs::read_dir(&dir).expect("read directory").filter_map(Result::ok)
+
+        let tmp_files = fs::read_dir(&dir)
+            .expect("read directory")
+            .filter_map(Result::ok)
             .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("tmp"))
             .count();
         assert_eq!(tmp_files, 0);
