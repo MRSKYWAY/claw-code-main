@@ -1,72 +1,18 @@
-name: Phase 7D edit
+name: Phase 7D verification
 on:
   push:
     branches: [phase-7d-plugin-execution-hardening]
 permissions:
-  contents: write
+  contents: read
 jobs:
-  edit:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Harden plugin tool timeout
+      - name: Verify timeout hardening is present
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          p = Path('rust/crates/plugins/src/lib.rs')
-          s = p.read_text()
-          if 'use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};' not in s:
-              s = s.replace('use std::time::{SystemTime, UNIX_EPOCH};', 'use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};', 1)
-          if 'fn plugin_tool_timeout() -> Duration {' not in s:
-              marker = 'fn default_tool_permission_label() -> String {'
-              helper = '''fn plugin_tool_timeout() -> Duration {
-    std::env::var("CLAW_PLUGIN_TOOL_TIMEOUT_MS")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .map(|value| value.clamp(100, 60_000))
-        .map(Duration::from_millis)
-        .unwrap_or_else(|| Duration::from_secs(10))
-}
-
-'''
-              if marker not in s:
-                  raise SystemExit('timeout helper insertion anchor not found')
-              s = s.replace(marker, helper + marker, 1)
-          old = '        let output = child.wait_with_output()?;'
-          new = '''        let timeout = plugin_tool_timeout();
-        let started = Instant::now();
-        let output = loop {
-            if let Some(status) = child.try_wait()? {
-                let output = child.wait_with_output()?;
-                debug_assert_eq!(output.status, status);
-                break output;
-            }
-            if started.elapsed() >= timeout {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(PluginError::CommandFailed(format!(
-                    "plugin tool `{}` from `{}` timed out after {} ms",
-                    self.definition.name,
-                    self.plugin_id,
-                    timeout.as_millis()
-                )));
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        };'''
-          if 'let timeout = plugin_tool_timeout();' not in s:
-              if old not in s:
-                  raise SystemExit('plugin tool wait anchor not found')
-              s = s.replace(old, new, 1)
-          p.write_text(s)
-          PY
-      - name: Verify source change
-        run: |
-          grep -n "plugin_tool_timeout\|try_wait" rust/crates/plugins/src/lib.rs
-      - name: Commit
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add rust/crates/plugins/src/lib.rs
-          git diff --cached --quiet || git commit -m 'feat: bound plugin tool execution time'
-          git push
+          grep -q 'fn plugin_tool_timeout() -> Duration' rust/crates/plugins/src/lib.rs
+          grep -q 'child.try_wait()' rust/crates/plugins/src/lib.rs
+      - name: Run plugin crate tests
+        working-directory: rust
+        run: cargo test -p plugins
