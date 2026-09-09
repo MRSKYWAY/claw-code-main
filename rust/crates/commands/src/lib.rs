@@ -88,6 +88,14 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         category: SlashCommandCategory::Core,
     },
     SlashCommandSpec {
+        name: "hooks",
+        aliases: &[],
+        summary: "Inspect configured PreToolUse and PostToolUse hooks",
+        argument_hint: None,
+        resume_supported: true,
+        category: SlashCommandCategory::Workspace,
+    },
+    SlashCommandSpec {
         name: "compact",
         aliases: &[],
         summary: "Compact local session history",
@@ -386,6 +394,9 @@ impl SlashCommand {
         Some(match command {
             "help" => Self::Help,
             "status" => Self::Status,
+            "hooks" => Self::Config {
+                section: Some("hooks".to_string()),
+            },
             "compact" => Self::Compact,
             "branch" => Self::Branch {
                 action: parts.next().map(ToOwned::to_owned),
@@ -1962,6 +1973,12 @@ mod tests {
         assert_eq!(SlashCommand::parse("/help"), Some(SlashCommand::Help));
         assert_eq!(SlashCommand::parse(" /status "), Some(SlashCommand::Status));
         assert_eq!(
+            SlashCommand::parse("/hooks"),
+            Some(SlashCommand::Config {
+                section: Some("hooks".to_string())
+            })
+        );
+        assert_eq!(
             SlashCommand::parse("/bughunter runtime"),
             Some(SlashCommand::Bughunter {
                 scope: Some("runtime".to_string())
@@ -2116,6 +2133,7 @@ mod tests {
         assert!(help.contains("Automation & discovery"));
         assert!(help.contains("/help"));
         assert!(help.contains("/status"));
+        assert!(help.contains("/hooks"));
         assert!(help.contains("/compact"));
         assert!(help.contains("/bughunter [scope]"));
         assert!(help.contains("/branch [list|create <name>|switch <name>]"));
@@ -2145,8 +2163,8 @@ mod tests {
         assert!(help.contains("aliases: /plugins, /marketplace"));
         assert!(help.contains("/agents"));
         assert!(help.contains("/skills"));
-        assert_eq!(slash_command_specs().len(), 28);
-        assert_eq!(resume_supported_slash_commands().len(), 13);
+        assert_eq!(slash_command_specs().len(), 29);
+        assert_eq!(resume_supported_slash_commands().len(), 14);
     }
 
     #[test]
