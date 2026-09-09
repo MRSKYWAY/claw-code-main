@@ -20,10 +20,11 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 1
       - name: Patch plugin stdin handling and run targeted test
+        working-directory: rust
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('rust/crates/plugins/src/lib.rs')
+          p = Path('crates/plugins/src/lib.rs')
           text = p.read_text()
           old = '''        let mut child = process.spawn()?;\n        if let Some(stdin) = child.stdin.as_mut() {\n            use std::io::Write as _;\n            stdin.write_all(input_json.as_bytes())?;\n        }\n'''
           new = '''        let mut child = process.spawn()?;\n        if let Some(mut stdin) = child.stdin.take() {\n            use std::io::Write as _;\n            stdin.write_all(input_json.as_bytes())?;\n        }\n'''
@@ -34,8 +35,9 @@ jobs:
           cargo test -p plugins --lib tests::aggregates_and_executes_plugin_tools
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add rust/crates/plugins/src/lib.rs
+          git add crates/plugins/src/lib.rs
           git commit -m 'fix: close plugin tool stdin after request'
+          cd ..
           rm .github/workflows/temp-plugin-stdin-fix.yml
           git add .github/workflows/temp-plugin-stdin-fix.yml
           git commit -m 'chore: remove temporary plugin fix runner'
