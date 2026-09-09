@@ -25,6 +25,12 @@ impl HookEvent {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookDecision {
+    Allow,
+    Deny,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookRunResult {
     denied: bool,
@@ -41,8 +47,17 @@ impl HookRunResult {
     }
 
     #[must_use]
+    pub fn decision(&self) -> HookDecision {
+        if self.denied {
+            HookDecision::Deny
+        } else {
+            HookDecision::Allow
+        }
+    }
+
+    #[must_use]
     pub fn is_denied(&self) -> bool {
-        self.denied
+        matches!(self.decision(), HookDecision::Deny)
     }
 
     #[must_use]
@@ -331,7 +346,7 @@ impl CommandWithStdin {
 
 #[cfg(test)]
 mod tests {
-    use super::{hook_timeout, HookRunResult, HookRunner, MAX_HOOK_TIMEOUT_MS, MIN_HOOK_TIMEOUT_MS};
+    use super::{hook_timeout, HookDecision, HookRunResult, HookRunner, MAX_HOOK_TIMEOUT_MS, MIN_HOOK_TIMEOUT_MS};
     use crate::config::{RuntimeFeatureConfig, RuntimeHookConfig};
     use std::time::Duration;
 
@@ -345,6 +360,7 @@ mod tests {
         let result = runner.run_pre_tool_use("Read", r#"{"path":"README.md"}"#);
 
         assert_eq!(result, HookRunResult::allow(vec!["pre ok".to_string()]));
+        assert_eq!(result.decision(), HookDecision::Allow);
     }
 
     #[test]
@@ -357,6 +373,7 @@ mod tests {
         let result = runner.run_pre_tool_use("Bash", r#"{"command":"pwd"}"#);
 
         assert!(result.is_denied());
+        assert_eq!(result.decision(), HookDecision::Deny);
         assert_eq!(result.messages(), &["blocked by hook".to_string()]);
     }
 
