@@ -2717,7 +2717,13 @@ fn build_runtime_plugin_state(
     let loader = ConfigLoader::default_for(&cwd);
     let runtime_config = loader.load()?;
     let plugin_manager = build_plugin_manager(&cwd, &loader, &runtime_config);
-    let tool_registry = GlobalToolRegistry::with_plugin_tools(plugin_manager.aggregated_tools()?)?;
+    let mut tool_registry = GlobalToolRegistry::with_plugin_tools(plugin_manager.aggregated_tools()?)?;
+    if !runtime_config.mcp().servers().is_empty() {
+        let mut manager = runtime::McpServerManager::from_runtime_config(&runtime_config);
+        let mcp_tools = tokio::runtime::Runtime::new()?.block_on(manager.discover_tools())?;
+        let definitions = mcp_tools.into_iter().map(|managed| managed.tool).collect::<Vec<_>>();
+        tool_registry = tool_registry.with_mcp_tools(definitions, manager);
+    }
     Ok((runtime_config.feature_config().clone(), tool_registry))
 }
 
