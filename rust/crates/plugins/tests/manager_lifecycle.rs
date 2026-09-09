@@ -27,14 +27,14 @@ impl Drop for TempDir {
     }
 }
 
-fn write_manifest(root: &Path, version: &str) {
+fn write_manifest(root: &Path, version: &str, description: &str) {
     fs::write(
         root.join("plugin.json"),
         format!(
             r#"{{
   "name": "lifecycle-demo",
   "version": "{version}",
-  "description": "Plugin lifecycle integration test",
+  "description": "{description}",
   "permissions": [],
   "defaultEnabled": false
 }}"#
@@ -53,7 +53,11 @@ fn manager_root() -> (TempDir, PluginManager) {
 fn install_enable_disable_and_uninstall_are_persistent() {
     let (config_home, mut manager) = manager_root();
     let source = TempDir::new("claw-plugin-source");
-    write_manifest(source.path(), "1.0.0");
+    write_manifest(
+        source.path(),
+        "1.0.0",
+        "Plugin lifecycle integration test",
+    );
 
     let install = manager
         .install(source.path().to_str().expect("utf-8 temp path"))
@@ -98,24 +102,21 @@ fn install_enable_disable_and_uninstall_are_persistent() {
 fn update_refreshes_version_and_description_without_changing_identity() {
     let (_config_home, mut manager) = manager_root();
     let source = TempDir::new("claw-plugin-source");
-    write_manifest(source.path(), "1.0.0");
+    write_manifest(
+        source.path(),
+        "1.0.0",
+        "Plugin lifecycle integration test",
+    );
 
     let install = manager
         .install(source.path().to_str().expect("utf-8 temp path"))
         .expect("plugin should install");
 
-    write_manifest(source.path(), "2.0.0");
-    fs::write(
-        source.path().join("plugin.json"),
-        r#"{
-  "name": "lifecycle-demo",
-  "version": "2.0.0",
-  "description": "Updated plugin lifecycle integration test",
-  "permissions": [],
-  "defaultEnabled": false
-}"#,
-    )
-    .expect("updated manifest should be written");
+    write_manifest(
+        source.path(),
+        "2.0.0",
+        "Updated plugin lifecycle integration test",
+    );
 
     let update = manager
         .update(&install.plugin_id)
