@@ -9,6 +9,7 @@ mod hooks;
 mod json;
 mod mcp;
 mod mcp_client;
+mod mcp_results;
 mod mcp_stdio;
 mod oauth;
 mod permissions;
@@ -55,6 +56,7 @@ pub use mcp_client::{
     McpClientAuth, McpClientBootstrap, McpClientTransport, McpManagedProxyTransport,
     McpRemoteTransport, McpSdkTransport, McpStdioTransport,
 };
+pub use mcp_results::McpToolOutput;
 pub use mcp_stdio::{
     spawn_mcp_stdio_process, JsonRpcError, JsonRpcId, JsonRpcRequest, JsonRpcResponse,
     ManagedMcpTool, McpInitializeClientInfo, McpInitializeParams, McpInitializeResult,
