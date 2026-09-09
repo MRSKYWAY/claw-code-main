@@ -1,0 +1,24 @@
+name: Phase 5 Policy Verification
+
+on:
+  push:
+    branches:
+      - phase-5-policy-ordering
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify runtime
+        run: cargo test --manifest-path rust/Cargo.toml -p runtime permissions --lib
+      - name: Verify CLI
+        run: cargo check --manifest-path rust/Cargo.toml -p claw-cli
+      - name: Remove temporary workflow
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          rm .github/workflows/phase5-policy-verify.yml .phase5-policy-trigger
+          git add .github/workflows/phase5-policy-verify.yml .phase5-policy-trigger
+          git commit -m "chore: remove temporary phase 5 verification files"
+          git push
