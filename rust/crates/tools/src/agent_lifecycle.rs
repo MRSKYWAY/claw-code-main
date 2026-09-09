@@ -201,7 +201,7 @@ fn unique_temp_path(path: &Path) -> PathBuf {
 mod tests {
     use super::{atomic_write, AgentCoordinator, AgentLifecycle, AgentStatus};
     use std::fs;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::thread;
 
     fn temp_path(name: &str) -> std::path::PathBuf {
@@ -210,6 +210,11 @@ mod tests {
             .expect("time")
             .as_nanos();
         std::env::temp_dir().join(format!("claw-agent-lifecycle-{nanos}-{name}"))
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
     }
 
     #[test]
@@ -253,13 +258,47 @@ mod tests {
 
     #[test]
     fn coordinator_reads_bounded_env_limit() {
-        let coordinator = AgentCoordinator::new(2);
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = std::env::var("CLAW_MAX_PARALLEL_AGENTS").ok();
+        std::env::set_var("CLAW_MAX_PARALLEL_AGENTS", "3");
+
+        let coordinator = AgentCoordinator::configured_from_env();
+        let first = coordinator.try_acquire().expect("first slot");
+        let second = coordinator.try_acquire().expect("second slot");
+        let third = coordinator.try_acquire().expect("third slot");
+        assert!(coordinator.try_acquire().is_err());
+        drop(third);
+        drop(second);
+        drop(first);
+        assert_eq!(coordinator.active_count(), 0);
+
+        match original {
+            Some(value) => std::env::set_var("CLAW_MAX_PARALLEL_AGENTS", value),
+            None => std::env::remove_var("CLAW_MAX_PARALLEL_AGENTS"),
+        }
+    }
+
+    #[test]
+    fn coordinator_defaults_invalid_env_to_two() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = std::env::var("CLAW_MAX_PARALLEL_AGENTS").ok();
+        std::env::set_var("CLAW_MAX_PARALLEL_AGENTS", "999");
+
+        let coordinator = AgentCoordinator::configured_from_env();
         let first = coordinator.try_acquire().expect("first slot");
         let second = coordinator.try_acquire().expect("second slot");
         assert!(coordinator.try_acquire().is_err());
         drop(second);
         drop(first);
-        assert_eq!(coordinator.active_count(), 0);
+
+        match original {
+            Some(value) => std::env::set_var("CLAW_MAX_PARALLEL_AGENTS", value),
+            None => std::env::remove_var("CLAW_MAX_PARALLEL_AGENTS"),
+        }
     }
 
     #[test]
