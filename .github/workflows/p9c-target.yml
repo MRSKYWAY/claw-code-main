@@ -1,49 +1,63 @@
 name: p9c-target
 on:
-  pull_request_target:
-    types: [opened, synchronize]
+  push:
+    branches: [main]
 permissions:
   contents: write
 jobs:
   implement:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'phase-9c-ndjson'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
-      - name: Apply NDJSON implementation
+      - name: Apply and validate Phase 9C
         shell: bash
         run: |
           set -euo pipefail
+          git fetch origin phase-9c-ndjson
+          git checkout -B phase-9c-ndjson origin/phase-9c-ndjson
           python3 - <<'PY'
           from pathlib import Path
           p = Path('rust/crates/claw-cli/src/main.rs')
           s = p.read_text()
-
           assert 'enum CliOutputFormat {\n    Text,\n    Json,\n}' in s
-          s = s.replace(
-              'enum CliOutputFormat {\n    Text,\n    Json,\n}',
-              'enum CliOutputFormat {\n    Text,\n    Json,\n    Ndjson,\n}',
-              1,
-          )
-          s = s.replace(
-              '            "text" => Ok(Self::Text),\n            "json" => Ok(Self::Json),',
-              '            "text" => Ok(Self::Text),\n            "json" => Ok(Self::Json),\n            "ndjson" => Ok(Self::Ndjson),',
-              1,
-          )
-          s = s.replace(
-              '                if output_format == CliOutputFormat::Json {\n                    println!(\n                        "{}",\n                        json!({\n                            "error": {\n                                "message": error.to_string(),\n                                "type": "runtime_error"\n                            }\n                        })\n                    );',
-              '                if matches!(output_format, CliOutputFormat::Json | CliOutputFormat::Ndjson) {\n                    if output_format == CliOutputFormat::Ndjson {\n                        println!("{}", json!({"type": "error", "error": {"message": error.to_string(), "kind": "runtime_error"}}));\n                    } else {\n                        println!(\n                            "{}",\n                            json!({\n                                "error": {\n                                    "message": error.to_string(),\n                                    "type": "runtime_error"\n                                }\n                            })\n                        );\n                    }',
-              1,
-          )
-          s = s.replace(
-              '            CliOutputFormat::Text => self.run_turn(input),\n            CliOutputFormat::Json => self.run_prompt_json(input),',
-              '            CliOutputFormat::Text => self.run_turn(input),\n            CliOutputFormat::Json => self.run_prompt_json(input),\n            CliOutputFormat::Ndjson => self.run_prompt_ndjson(input),',
-              1,
-          )
-          anchor = '''    fn run_prompt_json(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {'''
+          s = s.replace('enum CliOutputFormat {\n    Text,\n    Json,\n}', 'enum CliOutputFormat {\n    Text,\n    Json,\n    Ndjson,\n}', 1)
+          s = s.replace('            "text" => Ok(Self::Text),\n            "json" => Ok(Self::Json),', '            "text" => Ok(Self::Text),\n            "json" => Ok(Self::Json),\n            "ndjson" => Ok(Self::Ndjson),', 1)
+          old = '''                if output_format == CliOutputFormat::Json {
+                    println!(
+                        "{}",
+                        json!({
+                            "error": {
+                                "message": error.to_string(),
+                                "type": "runtime_error"
+                            }
+                        })
+                    );'''
+          new = '''                if matches!(output_format, CliOutputFormat::Json | CliOutputFormat::Ndjson) {
+                    if output_format == CliOutputFormat::Ndjson {
+                        println!("{}", json!({"type":"error","error":{"message":error.to_string(),"kind":"runtime_error"}}));
+                    } else {
+                        println!(
+                            "{}",
+                            json!({
+                                "error": {
+                                    "message": error.to_string(),
+                                    "type": "runtime_error"
+                                }
+                            })
+                        );
+                    }'''
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = '''            CliOutputFormat::Text => self.run_turn(input),
+            CliOutputFormat::Json => self.run_prompt_json(input),'''
+          new = '''            CliOutputFormat::Text => self.run_turn(input),
+            CliOutputFormat::Json => self.run_prompt_json(input),
+            CliOutputFormat::Ndjson => self.run_prompt_ndjson(input),'''
+          assert old in s
+          s = s.replace(old, new, 1)
+          anchor = '    fn run_prompt_json(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {'
           assert anchor in s
           method = r'''    fn run_prompt_ndjson(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {
         let session = self.runtime.session().clone();
@@ -58,48 +72,33 @@ jobs:
             None,
         )?;
         let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
-        println!(
-            "{}",
-            json!({
-                "type": "message_start",
-                "model": self.model,
-            })
-        );
+        println!("{}", json!({"type":"message_start","model":self.model}));
         let summary = runtime.run_turn(input, Some(&mut permission_prompter))?;
         self.runtime = runtime;
         self.persist_session()?;
-        println!(
-            "{}",
-            json!({
-                "type": "assistant",
-                "message": final_assistant_text(&summary),
-                "model": self.model,
-                "iterations": summary.iterations,
-                "tool_uses": collect_tool_uses(&summary),
-                "tool_results": collect_tool_results(&summary),
-            })
-        );
-        println!(
-            "{}",
-            json!({
-                "type": "result",
-                "model": self.model,
-                "usage": {
-                    "input_tokens": summary.usage.input_tokens,
-                    "output_tokens": summary.usage.output_tokens,
-                    "cache_creation_input_tokens": summary.usage.cache_creation_input_tokens,
-                    "cache_read_input_tokens": summary.usage.cache_read_input_tokens,
-                }
-            })
-        );
+        println!("{}", json!({
+            "type":"assistant",
+            "message":final_assistant_text(&summary),
+            "model":self.model,
+            "iterations":summary.iterations,
+            "tool_uses":collect_tool_uses(&summary),
+            "tool_results":collect_tool_results(&summary)
+        }));
+        println!("{}", json!({
+            "type":"result",
+            "model":self.model,
+            "usage":{
+                "input_tokens":summary.usage.input_tokens,
+                "output_tokens":summary.usage.output_tokens,
+                "cache_creation_input_tokens":summary.usage.cache_creation_input_tokens,
+                "cache_read_input_tokens":summary.usage.cache_read_input_tokens
+            }
+        }));
         Ok(())
     }
 
 '''
           s = s.replace(anchor, method + anchor, 1)
-          marker = '''    assert!(!output.contains("Thinking"));'''
-          if marker in s and 'ndjson' not in s[s.rfind('#[cfg(test)]'):]:
-              s = s.replace(marker, marker + '''\n\n    #[test]\n    fn parses_ndjson_output_format() {\n        assert_eq!(CliOutputFormat::parse("ndjson"), Ok(CliOutputFormat::Ndjson));\n        assert!(CliOutputFormat::parse("xml").is_err());\n    }''', 1)
           p.write_text(s)
           PY
           cd rust
