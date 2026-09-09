@@ -1,0 +1,55 @@
+name: phase-9b-repair
+on:
+  push:
+    branches: [phase-9b-hook-management]
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Repair hook command implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('rust/crates/commands/src/lib.rs')
+          text = path.read_text()
+
+          duplicate = '''            "hooks" => Self::Config {\n                section: Some("hooks".to_string()),\n            },\n'''
+          if text.count(duplicate) > 0:
+              if text.count(duplicate) != 1:
+                  raise SystemExit(f'expected exactly one stale hooks arm, found {text.count(duplicate)}')
+              text = text.replace(duplicate, '', 1)
+
+          old = '''            let hooks = root.get_mut("hooks").and_then(serde_json::Value::as_object_mut);\n            if root.get("hooks").is_some() && hooks.is_none() {\n                return Err(io::Error::other(format!("{}: hooks must be an object", path.display())));\n            }\n            if root.get("hooks").is_none() {\n                root["hooks"] = serde_json::json!({});\n            }\n            let hooks = root.get_mut("hooks").and_then(serde_json::Value::as_object_mut).expect("hooks object");\n'''
+          new = '''            if let Some(value) = root.get("hooks") {\n                if !value.is_object() {\n                    return Err(io::Error::other(format!("{}: hooks must be an object", path.display())));\n                }\n            } else {\n                root["hooks"] = serde_json::json!({});\n            }\n            let hooks = root\n                .get_mut("hooks")\n                .and_then(serde_json::Value::as_object_mut)\n                .expect("hooks object");\n'''
+          if old in text:
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+          cd rust
+          cargo fmt --all
+          cargo check -p commands
+          cargo test -p commands --lib
+      - name: Commit repaired source and remove patch workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f ../.github/workflows/phase-9b-fix.yml ../.github/workflows/phase-9b-fix2.yml ../.github/workflows/phase-9b-repair.yml
+          rm -f ../.github/phase-9b-fix-trigger.txt ../.github/phase-9b-fix2-trigger.txt ../.github/phase-9b-trigger.txt
+          cd ..
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add rust/crates/commands/src/lib.rs .github/workflows/phase-9b-fix.yml .github/workflows/phase-9b-fix2.yml .github/workflows/phase-9b-repair.yml .github/phase-9b-fix-trigger.txt .github/phase-9b-fix2-trigger.txt .github/phase-9b-trigger.txt
+          if git diff --cached --quiet; then
+            echo 'No source changes to commit'
+            exit 0
+          fi
+          git commit -m "fix: validate phase 9b hook management"
+          git push

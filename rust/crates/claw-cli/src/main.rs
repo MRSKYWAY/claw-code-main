@@ -23,7 +23,7 @@ use api::{
 };
 
 use commands::{
-    handle_agents_slash_command, handle_plugins_slash_command, handle_skills_slash_command,
+    handle_agents_slash_command, handle_hooks_slash_command, handle_plugins_slash_command, handle_skills_slash_command,
     render_slash_command_help, resume_supported_slash_commands, slash_command_specs,
     suggest_slash_commands, SlashCommand,
 };
@@ -1414,6 +1414,12 @@ impl LiveCli {
                 false
             }
             SlashCommand::Resume { session_path } => self.resume_session(session_path)?,
+            SlashCommand::Hooks { action, event, command } => {
+                let cwd = env::current_dir()?;
+                let report = handle_hooks_slash_command(action.as_deref(), event.as_deref(), command.as_deref(), &cwd)?;
+                println!("{report}");
+                false
+            }
             SlashCommand::Config { section } => {
                 Self::print_config(section.as_deref())?;
                 false
