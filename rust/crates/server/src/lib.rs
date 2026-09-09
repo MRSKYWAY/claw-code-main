@@ -273,6 +273,15 @@ pub struct ListModelsResponse {
     pub models: Vec<ModelSummary>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeStatusResponse {
+    pub status: String,
+    pub session_count: usize,
+    pub message_count: usize,
+    pub model_count: usize,
+    pub agent_count: usize,
+}
+
 #[must_use]
 pub fn app(state: AppState) -> Router {
     Router::new()
@@ -280,6 +289,7 @@ pub fn app(state: AppState) -> Router {
         .route("/sessions", post(create_session).get(list_sessions))
         .route("/models", get(list_models))
         .route("/agents", get(list_agents))
+        .route("/status", get(runtime_status))
         .route("/sessions/{id}", get(get_session))
         .route("/sessions/{id}/events", get(stream_session_events))
         .route("/sessions/{id}/message", post(send_message))
@@ -326,6 +336,27 @@ async fn list_agents() -> Json<ListAgentsResponse> {
     agents.sort_by(|left, right| right.created_at.cmp(&left.created_at));
     agents.dedup_by(|left, right| left.agent_id == right.agent_id);
     Json(ListAgentsResponse { agents })
+}
+
+async fn runtime_status(State(state): State<AppState>) -> Json<RuntimeStatusResponse> {
+    let sessions = state.sessions.read().await;
+    let session_count = sessions.len();
+    let message_count = sessions
+        .values()
+        .map(|session| session.conversation.messages.len())
+        .sum();
+    drop(sessions);
+
+    let model_count = list_models().await.0.models.len();
+    let agent_count = list_agents().await.0.agents.len();
+
+    Json(RuntimeStatusResponse {
+        status: "ok".to_string(),
+        session_count,
+        message_count,
+        model_count,
+        agent_count,
+    })
 }
 
 fn agent_store_dirs() -> Vec<PathBuf> {
@@ -516,8 +547,8 @@ fn load_store(path: &FsPath) -> Result<PersistedStore, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        app, AppState, CreateSessionResponse, ListModelsResponse, ListSessionsResponse, Session,
-        SessionDetailsResponse,
+        app, AppState, CreateSessionResponse, ListModelsResponse, ListSessionsResponse,
+        RuntimeStatusResponse, Session, SessionDetailsResponse,
     };
     use reqwest::Client;
     use std::fs;
@@ -694,6 +725,30 @@ mod tests {
             .models
             .iter()
             .any(|model| { model.alias == "gemini-flash" && model.model == "gemini-3.7-flash" }));
+    }
+
+    #[tokio::test]
+    async fn serves_runtime_status_from_live_state() {
+        let server = TestServer::spawn().await;
+        let client = Client::new();
+        let _created = create_session(&client, &server).await;
+
+        let status = client
+            .get(server.url("/status"))
+            .send()
+            .await
+            .expect("status request should succeed")
+            .error_for_status()
+            .expect("status request should return success")
+            .json::<RuntimeStatusResponse>()
+            .await
+            .expect("status response should parse");
+
+        assert_eq!(status.status, "ok");
+        assert_eq!(status.session_count, 1);
+        assert_eq!(status.message_count, 0);
+        assert!(status.model_count > 0);
+        assert_eq!(status.agent_count, 0);
     }
 
     #[tokio::test]
