@@ -445,28 +445,20 @@ impl McpServerManager {
 
         self.ensure_server_ready(&route.server_name).await?;
         let request_id = self.take_request_id();
-        let response =
-            {
-                let server = self.server_mut(&route.server_name)?;
-                let process = server.process.as_mut().ok_or_else(|| {
+        let response = self.call_tool_once(&route.server_name, &route.raw_name, arguments.clone()).await;
+        match response {
+            Ok(value) => Ok(value),
+            Err(first_error) => {
+                self.recover_server(&route.server_name).await.map_err(|recovery_error| {
                     McpServerManagerError::InvalidResponse {
                         server_name: route.server_name.clone(),
                         method: "tools/call",
-                        details: "server process missing after initialization".to_string(),
+                        details: format!("initial MCP call failed: {first_error}; recovery failed: {recovery_error}"),
                     }
                 })?;
-                process
-                    .call_tool(
-                        request_id,
-                        McpToolCallParams {
-                            name: route.raw_name,
-                            arguments,
-                            meta: None,
-                        },
-                    )
-                    .await?
-            };
-        Ok(response)
+                self.call_tool_once(&route.server_name, &route.raw_name, arguments).await
+            }
+        }
     }
 
     pub async fn shutdown(&mut self) -> Result<(), McpServerManagerError> {
@@ -478,6 +470,55 @@ impl McpServerManager {
             }
             server.process = None;
             server.initialized = false;
+        }
+        Ok(())
+    }
+
+    async fn call_tool_once(
+        &mut self,
+        server_name: &str,
+        raw_name: &str,
+        arguments: Option<JsonValue>,
+    ) -> Result<JsonRpcResponse<McpToolCallResult>, McpServerManagerError> {
+        self.ensure_server_ready(server_name).await?;
+        let request_id = self.take_request_id();
+        let response = {
+            let server = self.server_mut(server_name)?;
+            let process = server.process.as_mut().ok_or_else(|| McpServerManagerError::InvalidResponse {
+                server_name: server_name.to_string(), method: "tools/call", details: "server process missing after initialization".to_string(),
+            })?;
+            process.call_tool(request_id, McpToolCallParams { name: raw_name.to_string(), arguments, meta: None }).await?
+        };
+        if response.error.is_some() {
+            return Err(McpServerManagerError::JsonRpc { server_name: server_name.to_string(), method: "tools/call", error: response.error.clone().expect("checked above") });
+        }
+        if response.result.is_none() {
+            return Err(McpServerManagerError::InvalidResponse { server_name: server_name.to_string(), method: "tools/call", details: "missing result payload".to_string() });
+        }
+        Ok(response)
+    }
+
+    async fn recover_server(&mut self, server_name: &str) -> Result<(), McpServerManagerError> {
+        let process = self.server_mut(server_name)?.process.take();
+        if let Some(mut process) = process { let _ = process.shutdown().await; }
+        self.server_mut(server_name)?.initialized = false;
+        self.ensure_server_ready(server_name).await?;
+        self.rediscover_server_tools(server_name).await
+    }
+
+    async fn rediscover_server_tools(&mut self, server_name: &str) -> Result<(), McpServerManagerError> {
+        self.clear_routes_for_server(server_name);
+        let request_id = self.take_request_id();
+        let response = {
+            let server = self.server_mut(server_name)?;
+            let process = server.process.as_mut().ok_or_else(|| McpServerManagerError::InvalidResponse { server_name: server_name.to_string(), method: "tools/list", details: "server process missing after recovery".to_string() })?;
+            process.list_tools(request_id, Some(McpListToolsParams { cursor: None })).await?
+        };
+        if let Some(error) = response.error { return Err(McpServerManagerError::JsonRpc { server_name: server_name.to_string(), method: "tools/list", error }); }
+        let result = response.result.ok_or_else(|| McpServerManagerError::InvalidResponse { server_name: server_name.to_string(), method: "tools/list", details: "missing result payload after recovery".to_string() })?;
+        for tool in result.tools {
+            let qualified_name = mcp_tool_name(server_name, &tool.name);
+            self.tool_index.insert(qualified_name, ToolRoute { server_name: server_name.to_string(), raw_name: tool.name });
         }
         Ok(())
     }
