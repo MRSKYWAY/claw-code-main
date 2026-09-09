@@ -1,8 +1,8 @@
 use runtime::{
-    ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, PermissionMode, PermissionPolicy,
-    RuntimeError, RuntimeFeatureConfig, RuntimeHookConfig, StaticToolExecutor,
+    ApiClient, ApiRequest, AssistantEvent, ContentBlock, ConversationRuntime, PermissionMode,
+    PermissionPolicy, RuntimeError, RuntimeFeatureConfig, RuntimeHookConfig, Session,
+    StaticToolExecutor,
 };
-use runtime::session::{ContentBlock, Session};
 
 struct SingleCallApi;
 
