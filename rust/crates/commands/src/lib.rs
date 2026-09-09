@@ -91,7 +91,7 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         name: "hooks",
         aliases: &[],
         summary: "Inspect configured PreToolUse and PostToolUse hooks",
-        argument_hint: None,
+        argument_hint: Some("[list|add <PreToolUse|PostToolUse> <command>|remove <PreToolUse|PostToolUse> <command>]"),
         resume_supported: true,
         category: SlashCommandCategory::Workspace,
     },
@@ -310,6 +310,11 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommand {
     Help,
+    Hooks {
+        action: Option<String>,
+        event: Option<String>,
+        command: Option<String>,
+    },
     Status,
     Compact,
     Branch {
@@ -393,6 +398,15 @@ impl SlashCommand {
         let command = parts.next().unwrap_or_default();
         Some(match command {
             "help" => Self::Help,
+            "hooks" => {
+                let action = parts.next().map(ToOwned::to_owned);
+                let event = parts.next().map(ToOwned::to_owned);
+                let command = {
+                    let remainder = parts.collect::<Vec<_>>().join(" ");
+                    (!remainder.is_empty()).then_some(remainder)
+                };
+                Self::Hooks { action, event, command }
+            }
             "status" => Self::Status,
             "hooks" => Self::Config {
                 section: Some("hooks".to_string()),
@@ -806,6 +820,86 @@ pub fn handle_plugins_slash_command(
             ),
             reload_runtime: false,
         }),
+    }
+}
+
+pub fn handle_hooks_slash_command(
+    action: Option<&str>,
+    event: Option<&str>,
+    command: Option<&str>,
+    cwd: &Path,
+) -> std::io::Result<String> {
+    let loader = runtime::ConfigLoader::default_for(cwd);
+    match normalize_optional_args(action) {
+        None | Some("list") => {
+            let config = loader.load().map_err(|error| io::Error::other(error.to_string()))?;
+            let pre = config.hooks().pre_tool_use();
+            let post = config.hooks().post_tool_use();
+            let mut lines = vec!["Hooks".to_string()];
+            lines.push(format!("  PreToolUse       {} configured", pre.len()));
+            for hook in pre { lines.push(format!("    {hook}")); }
+            lines.push(format!("  PostToolUse      {} configured", post.len()));
+            for hook in post { lines.push(format!("    {hook}")); }
+            Ok(lines.join("\n"))
+        }
+        Some("add" | "remove") => {
+            let action = action.expect("action is present");
+            let event = normalize_hook_event(event)?;
+            let command = command.map(str::trim).filter(|value| !value.is_empty()).ok_or_else(|| {
+                io::Error::other(format!("Usage: /hooks {action} <PreToolUse|PostToolUse> <command>"))
+            })?;
+            let command = command.strip_prefix('"').and_then(|value| value.strip_suffix('"')).unwrap_or(command);
+            let path = cwd.join(".claw").join("settings.local.json");
+            fs::create_dir_all(path.parent().expect("settings path has parent"))?;
+            let mut root = if path.is_file() {
+                let text = fs::read_to_string(&path)?;
+                serde_json::from_str::<serde_json::Value>(&text).map_err(|error| io::Error::other(format!("invalid {}: {error}", path.display())))?
+            } else {
+                serde_json::json!({})
+            };
+            if !root.is_object() {
+                return Err(io::Error::other(format!("{} must contain a JSON object", path.display())));
+            }
+            let hooks = root.get_mut("hooks").and_then(serde_json::Value::as_object_mut);
+            if root.get("hooks").is_some() && hooks.is_none() {
+                return Err(io::Error::other(format!("{}: hooks must be an object", path.display())));
+            }
+            if root.get("hooks").is_none() {
+                root["hooks"] = serde_json::json!({});
+            }
+            let hooks = root.get_mut("hooks").and_then(serde_json::Value::as_object_mut).expect("hooks object");
+            let values = hooks.entry(event.to_string()).or_insert_with(|| serde_json::json!([]));
+            let array = values.as_array_mut().ok_or_else(|| io::Error::other(format!("{}: hooks.{event} must be an array", path.display())))?;
+            match action {
+                "add" => {
+                    if array.iter().any(|value| value.as_str() == Some(command)) {
+                        return Ok(format!("Hook already configured: {event} · {command}"));
+                    }
+                    array.push(serde_json::Value::String(command.to_string()));
+                    fs::write(&path, serde_json::to_string_pretty(&root).map_err(io::Error::other)? + "\n")?;
+                    Ok(format!("Hook\n  Result           added\n  Event            {event}\n  Command          {command}"))
+                }
+                "remove" => {
+                    let before = array.len();
+                    array.retain(|value| value.as_str() != Some(command));
+                    if before == array.len() {
+                        return Ok(format!("Hook not found: {event} · {command}"));
+                    }
+                    fs::write(&path, serde_json::to_string_pretty(&root).map_err(io::Error::other)? + "\n")?;
+                    Ok(format!("Hook\n  Result           removed\n  Event            {event}\n  Command          {command}"))
+                }
+                _ => unreachable!(),
+            }
+        }
+        Some(other) => Ok(format!("Unknown /hooks action '{other}'. Use list, add, or remove.")),
+    }
+}
+
+fn normalize_hook_event(event: Option<&str>) -> std::io::Result<&'static str> {
+    match event.map(str::trim).map(|value| value.to_ascii_lowercase()).as_deref() {
+        Some("pretooluse") | Some("pre") => Ok("PreToolUse"),
+        Some("posttooluse") | Some("post") => Ok("PostToolUse"),
+        _ => Err(io::Error::other("hook event must be PreToolUse or PostToolUse")),
     }
 }
 
@@ -1971,6 +2065,14 @@ mod tests {
     #[test]
     fn parses_supported_slash_commands() {
         assert_eq!(SlashCommand::parse("/help"), Some(SlashCommand::Help));
+        assert_eq!(
+            SlashCommand::parse("/hooks add pre echo hi"),
+            Some(SlashCommand::Hooks {
+                action: Some("add".to_string()),
+                event: Some("pre".to_string()),
+                command: Some("echo hi".to_string()),
+            })
+        );
         assert_eq!(SlashCommand::parse(" /status "), Some(SlashCommand::Status));
         assert_eq!(
             SlashCommand::parse("/hooks"),
