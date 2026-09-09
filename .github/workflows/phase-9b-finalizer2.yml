@@ -19,16 +19,15 @@ jobs:
           commands = Path('rust/crates/commands/src/lib.rs')
           lines = commands.read_text().splitlines()
 
-          # Remove the stale duplicate /hooks parser arm.
           in_parse = False
           out = []
           i = 0
           while i < len(lines):
               line = lines[i]
-              if line.strip() == 'pub fn parse(input: &str) -> Option<Self> {' or line.strip() == 'pub fn parse(input: &str) -> Option<Self>':
+              if line.strip() in ('pub fn parse(input: &str) -> Option<Self> {', 'pub fn parse(input: &str) -> Option<Self>'):
                   in_parse = True
               if in_parse and line.strip() == '"hooks" => Self::Config {':
-                  if i + 2 < len(lines) and lines[i + 1].strip() == 'section: Some("hooks".to_string()),' and lines[i + 2].strip() == '},':
+                  if i + 2 < len(lines) and lines[i + 1].strip().startswith('section: Some("hooks"') and lines[i + 2].strip() == '},':
                       i += 3
                       continue
               out.append(line)
@@ -37,80 +36,89 @@ jobs:
               i += 1
           lines = out
 
-          # Fix hook config mutation borrow: validate immutably, then borrow mutably.
-          start = None
-          for idx, line in enumerate(lines):
-              if 'let hooks = root.get_mut("hooks").and_then(serde_json::Value::as_object_mut);' in line:
-                  start = idx
-                  break
-          if start is None:
-              raise SystemExit('hook mutable-borrow block not found')
-          end = None
-          for idx in range(start, min(start + 12, len(lines))):
-              if 'expect("hooks object")' in lines[idx]:
-                  end = idx
-                  break
-          if end is None:
-              raise SystemExit('hook borrow block terminator not found')
-          replacement = [
-              '            if let Some(value) = root.get("hooks") {',
-              '                if !value.is_object() {',
-              '                    return Err(io::Error::other(format!("{}: hooks must be an object", path.display())));',
-              '                }',
-              '            } else {',
-              '                root["hooks"] = serde_json::json!({});',
-              '            }',
-              '            let hooks = root',
-              '                .get_mut("hooks")',
-              '                .and_then(serde_json::Value::as_object_mut)',
-              '                .expect("hooks object");',
-          ]
-          lines[start:end + 1] = replacement
+          start = next((i for i, line in enumerate(lines) if 'let hooks = root.get_mut("hooks").and_then(serde_json::Value::as_object_mut);' in line), None)
+          if start is not None:
+              end = next((i for i in range(start, min(start + 12, len(lines))) if 'expect("hooks object")' in lines[i]), None)
+              if end is None:
+                  raise SystemExit('hooks borrow block terminator not found')
+              lines[start:end + 1] = [
+                  '            if let Some(value) = root.get("hooks") {',
+                  '                if !value.is_object() {',
+                  '                    return Err(io::Error::other(format!("{}: hooks must be an object", path.display())));',
+                  '                }',
+                  '            } else {',
+                  '                root["hooks"] = serde_json::json!({});',
+                  '            }',
+                  '            let hooks = root',
+                  '                .get_mut("hooks")',
+                  '                .and_then(serde_json::Value::as_object_mut)',
+                  '                .expect("hooks object");',
+              ]
 
-          # Cover Hooks in the generic slash dispatcher.
           text = '\n'.join(lines) + '\n'
+          parse_pos = text.find('SlashCommand::parse("/hooks")')
+          if parse_pos < 0:
+              raise SystemExit('hooks parser assertion not found')
+          parse_end = text.find('        );', parse_pos)
+          if parse_end < 0:
+              raise SystemExit('hooks parser assertion end not found')
+          parse_block = text[parse_pos:parse_end + len('        );')]
+          if 'SlashCommand::Config' in parse_block:
+              replacement = '''SlashCommand::parse("/hooks"),
+            Some(SlashCommand::Hooks {
+                action: None,
+                event: None,
+                command: None,
+            })
+        );'''
+              text = text[:parse_pos] + replacement + text[parse_end + len('        );'):]
+
           marker = 'pub fn handle_slash_command('
           pos = text.find(marker)
           if pos < 0:
               raise SystemExit('handle_slash_command not found')
           tail = text[pos:]
-          if '| SlashCommand::Hooks { .. }' not in tail[:tail.find('fn normalize_hook_event') if 'fn normalize_hook_event' in tail else len(tail)]:
+          body_end = tail.find('\n}\n\n#[cfg(test)]')
+          section = tail[:body_end] if body_end >= 0 else tail
+          if '| SlashCommand::Hooks { .. }' not in section:
               target = '        | SlashCommand::Skills { .. }\n        | SlashCommand::Unknown(_) => None,'
-              if target not in tail:
+              if target not in section:
                   raise SystemExit('commands dispatcher target not found')
-              tail = tail.replace(target, '        | SlashCommand::Skills { .. }\n        | SlashCommand::Hooks { .. }\n        | SlashCommand::Unknown(_) => None,', 1)
+              section = section.replace(target, '        | SlashCommand::Skills { .. }\n        | SlashCommand::Hooks { .. }\n        | SlashCommand::Unknown(_) => None,', 1)
+              tail = section + tail[len(section):]
               text = text[:pos] + tail
 
           commands.write_text(text)
 
           cli = Path('rust/crates/claw-cli/src/main.rs')
-          text = cli.read_text()
-          marker = 'fn run_resume_command('
-          pos = text.find(marker)
-          if pos < 0:
+          lines = cli.read_text().splitlines()
+          start = next((i for i, line in enumerate(lines) if line.strip() == 'fn run_resume_command('), None)
+          if start is None:
               raise SystemExit('run_resume_command not found')
-          tail = text[pos:]
-          target = '        | SlashCommand::Plugins { .. }\n        | SlashCommand::Unknown(_) => Err("unsupported resumed slash command".into()),'
-          if '| SlashCommand::Hooks { .. }' not in tail[:tail.find('\n}\n', 0) if '\n}\n' in tail else len(tail)]:
-              if target not in tail:
-                  raise SystemExit('claw-cli resume dispatcher target not found')
-              tail = tail.replace(target, '        | SlashCommand::Plugins { .. }\n        | SlashCommand::Hooks { .. }\n        | SlashCommand::Unknown(_) => Err("unsupported resumed slash command".into()),', 1)
-              text = text[:pos] + tail
-          cli.write_text(text)
+          depth = 0
+          unknown = None
+          for i in range(start, len(lines)):
+              depth += lines[i].count('{') - lines[i].count('}')
+              if 'SlashCommand::Unknown(_) => Err("unsupported resumed slash command".into()),' in lines[i] and depth > 0:
+                  unknown = i
+                  break
+          if unknown is None:
+              raise SystemExit('resume Unknown arm not found')
+          if not any('SlashCommand::Hooks { .. }' in line for line in lines[start:unknown + 1]):
+              lines.insert(unknown, '        | SlashCommand::Hooks { .. }')
+          cli.write_text('\n'.join(lines) + '\n')
           PY
-
           cd rust
           cargo fmt --all
           cargo check -p commands
           cargo test -p commands --lib
           cargo check -p claw-cli
-      - name: Clean temporary repair files and commit
+      - name: Clean repair scaffolding and commit
         shell: bash
         run: |
           set -euo pipefail
-          cd ..
-          rm -f .github/workflows/phase-9b-fix.yml .github/workflows/phase-9b-fix2.yml .github/workflows/phase-9b-repair.yml .github/workflows/phase-9b-repair2.yml .github/workflows/phase-9b-repair3.yml .github/workflows/phase-9b-repair4.yml .github/workflows/phase-9b-repair5.yml .github/workflows/phase-9b-repair6.yml .github/workflows/phase-9b-repair7.yml .github/workflows/phase-9b-finalize.yml .github/workflows/phase-9b-finalizer2.yml .github/workflows/phase-9b-lastfix.yml .github/workflows/phase-9b-repair-final.yml .github/workflows/phase-9b-finalizer.yml
-          rm -f .github/phase-9b-fix-trigger.txt .github/phase-9b-fix2-trigger.txt .github/phase-9b-trigger.txt .github/phase-9b-final-trigger.txt .github/phase-9b-repair-final-trigger.txt
+          rm -f .github/workflows/phase-9b-fix.yml .github/workflows/phase-9b-fix2.yml .github/workflows/phase-9b-repair.yml .github/workflows/phase-9b-repair2.yml .github/workflows/phase-9b-repair3.yml .github/workflows/phase-9b-repair4.yml .github/workflows/phase-9b-repair5.yml .github/workflows/phase-9b-repair6.yml .github/workflows/phase-9b-repair7.yml .github/workflows/phase-9b-repair8.yml .github/workflows/phase-9b-finalize.yml .github/workflows/phase-9b-finalizer2.yml .github/workflows/phase-9b-final-testfix.yml .github/workflows/phase-9b-lastfix.yml .github/workflows/phase-9b-repair-final.yml
+          rm -f .github/phase-9b-fix-trigger.txt .github/phase-9b-fix2-trigger.txt .github/phase-9b-trigger.txt .github/phase-9b-final-trigger.txt .github/phase-9b-repair-final-trigger.txt .github/phase-9b-repair8-trigger.txt .github/phase-9b-final-test-trigger.txt .github/phase-9b-deterministic-trigger.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
