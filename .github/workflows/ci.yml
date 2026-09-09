@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  rust:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run cargo fmt check
+        working-directory: rust
+        run: cargo fmt --all -- --check
+
+      - name: Run cargo clippy
+        working-directory: rust
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run cargo check
+        working-directory: rust
+        run: cargo check --workspace
+
+      - name: Run cargo test
+        working-directory: rust
+        run: cargo test --workspace
+
+      - name: Run release build
+        working-directory: rust
+        run: cargo build --release
