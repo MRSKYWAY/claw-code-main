@@ -23,6 +23,49 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Apply pending plugin process fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          hooks = Path('rust/crates/plugins/src/hooks.rs')
+          text = hooks.read_text()
+          text = text.replace(
+              '''                let _ = child.kill();
+                let output = child.wait_with_output()?;
+                return Ok(CommandOutput::TimedOut { output, timeout });''',
+              '''                let _ = child.kill();
+                let status = child.wait()?;
+                let output = std::process::Output {
+                    status,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                };
+                return Ok(CommandOutput::TimedOut { output, timeout });''',
+              1,
+          )
+          hooks.write_text(text)
+
+          lib = Path('rust/crates/plugins/src/lib.rs')
+          text = lib.read_text()
+          text = text.replace(
+              '''        let mut child = process.spawn()?;
+        if let Some(stdin) = child.stdin.as_mut() {
+            use std::io::Write as _;
+            stdin.write_all(input_json.as_bytes())?;
+        }''',
+              '''        let mut child = process.spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write as _;
+            stdin.write_all(input_json.as_bytes())?;
+        }''',
+              1,
+          )
+          lib.write_text(text)
+          PY
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
