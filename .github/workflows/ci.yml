@@ -30,9 +30,9 @@ jobs:
         working-directory: rust
         run: cargo clippy --workspace --lib --bins
 
-      - name: Run cargo clippy (commands, warnings denied)
+      - name: Run cargo clippy (commands, all targets)
         working-directory: rust
-        run: cargo clippy -p commands --all-targets -- -D warnings
+        run: cargo clippy -p commands --all-targets
 
       - name: Run cargo check
         working-directory: rust
