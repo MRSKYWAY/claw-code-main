@@ -1,0 +1,37 @@
+name: Phase 7D edit
+on:
+  push:
+    branches: [phase-7d-plugin-execution-hardening]
+permissions:
+  contents: write
+jobs:
+  edit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Harden plugin tool timeout
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('rust/crates/plugins/src/lib.rs')
+          s = p.read_text()
+          s = s.replace('use std::time::{SystemTime, UNIX_EPOCH};', 'use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};')
+          old = '''        let output = child.wait_with_output()?;\n        if output.status.success() {'''
+          new = '''        let timeout = plugin_tool_timeout();\n        let started = Instant::now();\n        let output = loop {\n            if let Some(status) = child.try_wait()? {\n                let output = child.wait_with_output()?;\n                debug_assert_eq!(output.status, status);\n                break output;\n            }\n            if started.elapsed() >= timeout {\n                let _ = child.kill();\n                let _ = child.wait();\n                return Err(PluginError::CommandFailed(format!(\n                    "plugin tool `{}` from `{}` timed out after {} ms",\n                    self.definition.name,\n                    self.plugin_id,\n                    timeout.as_millis()\n                )));\n            }\n            std::thread::sleep(Duration::from_millis(10));\n        };\n        if output.status.success() {'''
+          if old not in s:
+              raise SystemExit('execute replacement anchor not found')
+          s = s.replace(old, new, 1)
+          anchor = '''fn default_tool_permission_label() -> String {\n    "danger-full-access".to_string()\n}\n'''
+          addition = '''fn default_tool_permission_label() -> String {\n    "danger-full-access".to_string()\n}\n\nfn plugin_tool_timeout() -> Duration {\n    std::env::var("CLAW_PLUGIN_TOOL_TIMEOUT_MS")\n        .ok()\n        .and_then(|value| value.trim().parse::<u64>().ok())\n        .map(|value| value.clamp(100, 60_000))\n        .map(Duration::from_millis)\n        .unwrap_or_else(|| Duration::from_secs(10))\n}\n'''
+          if anchor not in s:
+              raise SystemExit('timeout helper anchor not found')
+          s = s.replace(anchor, addition, 1)
+          p.write_text(s)
+          PY
+      - name: Commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add rust/crates/plugins/src/lib.rs
+          git diff --cached --quiet || git commit -m 'feat: bound plugin tool execution time'
+          git push
