@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use crate::hooks::{HookDecision, HookRunResult};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PermissionMode {
     ReadOnly,
@@ -44,6 +46,38 @@ pub trait PermissionPrompter {
 pub enum PermissionOutcome {
     Allow,
     Deny { reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolPolicyDecision {
+    Allow,
+    PermissionDenied { reason: String },
+    HookDenied { messages: Vec<String> },
+}
+
+impl ToolPolicyDecision {
+    #[must_use]
+    pub fn from_permission_and_hook(
+        permission: &PermissionOutcome,
+        hook: &HookRunResult,
+    ) -> Self {
+        match permission {
+            PermissionOutcome::Deny { reason } => Self::PermissionDenied {
+                reason: reason.clone(),
+            },
+            PermissionOutcome::Allow => match hook.decision() {
+                HookDecision::Allow => Self::Allow,
+                HookDecision::Deny => Self::HookDenied {
+                    messages: hook.messages().to_vec(),
+                },
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn is_allowed(&self) -> bool {
+        matches!(self, Self::Allow)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,8 +172,9 @@ impl PermissionPolicy {
 mod tests {
     use super::{
         PermissionMode, PermissionOutcome, PermissionPolicy, PermissionPromptDecision,
-        PermissionPrompter, PermissionRequest,
+        PermissionPrompter, PermissionRequest, ToolPolicyDecision,
     };
+    use crate::hooks::HookRunResult;
 
     struct RecordingPrompter {
         seen: Vec<PermissionRequest>,
@@ -228,5 +263,33 @@ mod tests {
             policy.authorize("bash", "echo hi", Some(&mut prompter)),
             PermissionOutcome::Deny { reason } if reason == "not now"
         ));
+    }
+
+    #[test]
+    fn permission_denial_takes_precedence_over_hook_denial() {
+        let permission = PermissionOutcome::Deny {
+            reason: "permission denied".to_string(),
+        };
+        let hook = HookRunResult::allow(vec!["hook denied".to_string()]);
+
+        assert_eq!(
+            ToolPolicyDecision::from_permission_and_hook(&permission, &hook),
+            ToolPolicyDecision::PermissionDenied {
+                reason: "permission denied".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn hook_denial_is_selected_after_permission_allows() {
+        let permission = PermissionOutcome::Allow;
+        let hook = HookRunResult::denied(vec!["blocked by policy".to_string()]);
+
+        assert_eq!(
+            ToolPolicyDecision::from_permission_and_hook(&permission, &hook),
+            ToolPolicyDecision::HookDenied {
+                messages: vec!["blocked by policy".to_string()]
+            }
+        );
     }
 }

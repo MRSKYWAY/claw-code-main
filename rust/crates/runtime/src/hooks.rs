@@ -47,6 +47,14 @@ impl HookRunResult {
     }
 
     #[must_use]
+    pub fn denied(messages: Vec<String>) -> Self {
+        Self {
+            denied: true,
+            messages,
+        }
+    }
+
+    #[must_use]
     pub fn decision(&self) -> HookDecision {
         if self.denied {
             HookDecision::Deny
@@ -168,10 +176,7 @@ impl HookRunner {
                         format!("{} hook denied tool `{tool_name}`", event.as_str())
                     });
                     messages.push(message);
-                    return HookRunResult {
-                        denied: true,
-                        messages,
-                    };
+                    return HookRunResult::denied(messages);
                 }
                 HookCommandOutcome::Warn { message } => messages.push(message),
             }
@@ -356,9 +361,7 @@ mod tests {
             vec![shell_snippet("printf 'pre ok'")],
             Vec::new(),
         ));
-
         let result = runner.run_pre_tool_use("Read", r#"{"path":"README.md"}"#);
-
         assert_eq!(result, HookRunResult::allow(vec!["pre ok".to_string()]));
         assert_eq!(result.decision(), HookDecision::Allow);
     }
@@ -369,9 +372,7 @@ mod tests {
             vec![shell_snippet("printf 'blocked by hook'; exit 2")],
             Vec::new(),
         ));
-
         let result = runner.run_pre_tool_use("Bash", r#"{"command":"pwd"}"#);
-
         assert!(result.is_denied());
         assert_eq!(result.decision(), HookDecision::Deny);
         assert_eq!(result.messages(), &["blocked by hook".to_string()]);
@@ -385,14 +386,9 @@ mod tests {
                 Vec::new(),
             ),
         ));
-
         let result = runner.run_pre_tool_use("Edit", r#"{"file":"src/lib.rs"}"#);
-
         assert!(!result.is_denied());
-        assert!(result
-            .messages()
-            .iter()
-            .any(|message| message.contains("allowing tool execution to continue")));
+        assert!(result.messages().iter().any(|message| message.contains("allowing tool execution to continue")));
     }
 
     #[cfg(not(windows))]
@@ -403,15 +399,10 @@ mod tests {
             vec![shell_snippet("sleep 1")],
             Vec::new(),
         ));
-
         let result = runner.run_pre_tool_use("Read", r#"{"path":"README.md"}"#);
         std::env::remove_var("CLAW_HOOK_TIMEOUT_MS");
-
         assert!(!result.is_denied());
-        assert!(result
-            .messages()
-            .iter()
-            .any(|message| message.contains("timed out after 100 ms")));
+        assert!(result.messages().iter().any(|message| message.contains("timed out after 100 ms")));
     }
 
     #[test]
@@ -425,12 +416,7 @@ mod tests {
     }
 
     #[cfg(windows)]
-    fn shell_snippet(script: &str) -> String {
-        script.replace('\'', "\"")
-    }
-
+    fn shell_snippet(script: &str) -> String { script.replace('\'', "\"") }
     #[cfg(not(windows))]
-    fn shell_snippet(script: &str) -> String {
-        script.to_string()
-    }
+    fn shell_snippet(script: &str) -> String { script.to_string() }
 }

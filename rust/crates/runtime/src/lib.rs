@@ -72,7 +72,7 @@ pub use oauth::{
 };
 pub use permissions::{
     PermissionMode, PermissionOutcome, PermissionPolicy, PermissionPromptDecision,
-    PermissionPrompter, PermissionRequest,
+    PermissionPrompter, PermissionRequest, ToolPolicyDecision,
 };
 pub use prompt::{
     load_system_prompt, prepend_bullets, ContextFile, ProjectContext, PromptBuildError,
