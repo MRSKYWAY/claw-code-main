@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
-use std::fs;
-use std::path::Path;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -90,8 +92,34 @@ impl Session {
     }
 
     pub fn save_to_path(&self, path: impl AsRef<Path>) -> Result<(), SessionError> {
-        fs::write(path, self.to_json().render())?;
-        Ok(())
+        let path = path.as_ref();
+        let contents = self.to_json().render();
+        let temp_path = atomic_temp_path(path);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)?;
+
+        let write_result = (|| -> Result<(), SessionError> {
+            file.write_all(contents.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+
+            match fs::rename(&temp_path, path) {
+                Ok(()) => Ok(()),
+                Err(error) if cfg!(windows) && error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    fs::remove_file(path)?;
+                    fs::rename(&temp_path, path)?;
+                    Ok(())
+                }
+                Err(error) => Err(SessionError::Io(error)),
+            }
+        })();
+
+        if write_result.is_err() {
+            let _ = fs::remove_file(&temp_path);
+        }
+        write_result
     }
 
     pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, SessionError> {
@@ -326,6 +354,18 @@ impl ContentBlock {
             ))),
         }
     }
+}
+
+fn atomic_temp_path(path: &Path) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("session.json");
+    path.with_file_name(format!(".{file_name}.{nanos}.tmp"))
 }
 
 fn usage_to_json(usage: TokenUsage) -> JsonValue {
