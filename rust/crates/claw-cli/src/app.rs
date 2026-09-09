@@ -307,12 +307,15 @@ impl CliApp {
     }
 
     fn render_response(&mut self, input: &str, out: &mut impl Write) -> io::Result<()> {
+        let machine_output = self.config.output_format != OutputFormat::Text;
         let mut stream_spinner = Spinner::new();
-        stream_spinner.tick(
-            "Opening conversation stream",
-            self.renderer.color_theme(),
-            out,
-        )?;
+        if !machine_output {
+            stream_spinner.tick(
+                "Opening conversation stream",
+                self.renderer.color_theme(),
+                out,
+            )?;
+        }
 
         let mut turn_usage = UsageSummary::default();
         let mut tool_spinner = Spinner::new();
@@ -322,33 +325,39 @@ impl CliApp {
         let result =
             self.conversation_client
                 .run_turn(&mut self.conversation_history, input, |event| {
-                    Self::handle_stream_event(
-                        renderer,
-                        event,
-                        &mut stream_spinner,
-                        &mut tool_spinner,
-                        &mut saw_text,
-                        &mut turn_usage,
-                        out,
-                    );
+                    if !machine_output {
+                        Self::handle_stream_event(
+                            renderer,
+                            event,
+                            &mut stream_spinner,
+                            &mut tool_spinner,
+                            &mut saw_text,
+                            &mut turn_usage,
+                            out,
+                        );
+                    }
                 });
 
         let summary = match result {
             Ok(summary) => summary,
             Err(error) => {
-                stream_spinner.fail(
-                    "Streaming response failed",
-                    self.renderer.color_theme(),
-                    out,
-                )?;
+                if !machine_output {
+                    stream_spinner.fail(
+                        "Streaming response failed",
+                        self.renderer.color_theme(),
+                        out,
+                    )?;
+                }
                 return Err(io::Error::other(error));
             }
         };
         self.state.last_usage = summary.usage.clone();
-        if saw_text {
-            writeln!(out)?;
-        } else {
-            stream_spinner.finish("Streaming response", self.renderer.color_theme(), out)?;
+        if !machine_output {
+            if saw_text {
+                writeln!(out)?;
+            } else {
+                stream_spinner.finish("Streaming response", self.renderer.color_theme(), out)?;
+            }
         }
 
         self.write_turn_output(&summary, out)?;
