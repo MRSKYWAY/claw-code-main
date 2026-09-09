@@ -1,10 +1,10 @@
 name: Phase 7A Skill Resolution
-on: [push]
+on:
+  push:
 permissions:
   contents: write
 jobs:
   verify:
-    if: github.ref == 'refs/heads/phase-7a-skill-resolution'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -85,7 +85,6 @@ jobs:
     Err(format!("unknown skill: {requested}"))
 }'''
           s = s[:start] + new + s[end:]
-          marker = '\nconst DEFAULT_AGENT_MODEL'
           test = r'''
 
 #[cfg(test)]
