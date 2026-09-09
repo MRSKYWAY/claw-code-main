@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod hooks;
+
+pub use hooks::handle_hooks_slash_command;
+
 use plugins::{PluginError, PluginManager, PluginSummary};
 use runtime::{compact_session, CompactionConfig, Session};
 
@@ -90,8 +94,8 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     SlashCommandSpec {
         name: "hooks",
         aliases: &[],
-        summary: "Inspect configured PreToolUse and PostToolUse hooks",
-        argument_hint: None,
+        summary: "Inspect or manage PreToolUse and PostToolUse hooks",
+        argument_hint: Some("[list|add <PreToolUse|PostToolUse> <command>|remove <PreToolUse|PostToolUse> <command>]"),
         resume_supported: true,
         category: SlashCommandCategory::Workspace,
     },
@@ -395,7 +399,10 @@ impl SlashCommand {
             "help" => Self::Help,
             "status" => Self::Status,
             "hooks" => Self::Config {
-                section: Some("hooks".to_string()),
+                section: Some(match remainder_after_command(trimmed, command) {
+                    Some(remainder) => format!("hooks {remainder}"),
+                    None => "hooks".to_string(),
+                }),
             },
             "compact" => Self::Compact,
             "branch" => Self::Branch {
@@ -1976,6 +1983,18 @@ mod tests {
             SlashCommand::parse("/hooks"),
             Some(SlashCommand::Config {
                 section: Some("hooks".to_string())
+            })
+        );
+        assert_eq!(
+            SlashCommand::parse("/hooks add pre echo hi"),
+            Some(SlashCommand::Config {
+                section: Some("hooks add pre echo hi".to_string())
+            })
+        );
+        assert_eq!(
+            SlashCommand::parse("/hooks remove PostToolUse echo hi"),
+            Some(SlashCommand::Config {
+                section: Some("hooks remove PostToolUse echo hi".to_string())
             })
         );
         assert_eq!(
