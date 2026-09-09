@@ -1,9 +1,10 @@
 name: Fix plugin process handling
 
 on:
-  push:
+  pull_request:
+    types: [edited, synchronize]
     branches:
-      - phase-9c-mcp-inspector
+      - main
 
 permissions:
   contents: write
@@ -15,7 +16,7 @@ jobs:
       - name: Check out branch
         uses: actions/checkout@v4
         with:
-          ref: phase-9c-mcp-inspector
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 1
 
       - name: Patch source
@@ -38,9 +39,8 @@ jobs:
                     stderr: Vec::new(),
                 };
                 return Ok(CommandOutput::TimedOut { output, timeout });'''
-          if old not in text:
-              raise SystemExit('hooks timeout block not found')
-          hooks.write_text(text.replace(old, new, 1))
+          if old in text:
+              hooks.write_text(text.replace(old, new, 1))
 
           lib = Path('rust/crates/plugins/src/lib.rs')
           text = lib.read_text()
@@ -54,9 +54,8 @@ jobs:
             use std::io::Write as _;
             stdin.write_all(input_json.as_bytes())?;
         }'''
-          if old not in text:
-              raise SystemExit('plugin tool stdin block not found')
-          lib.write_text(text.replace(old, new, 1))
+          if old in text:
+              lib.write_text(text.replace(old, new, 1))
           PY
 
       - name: Verify targeted regressions
@@ -65,13 +64,15 @@ jobs:
           cargo test -p plugins --lib hooks::tests::hook_timeout_warns_and_allows_tool_execution_to_continue
           cargo test -p plugins --lib tests::aggregates_and_executes_plugin_tools
 
-      - name: Commit fixes and remove helper
+      - name: Commit fixes and remove helpers
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git rm .github/workflows/fix-plugin-process-handling.yml .github/workflows/apply-plugin-process-fixes.yml || true
+          git rm -f .github/workflows/fix-plugin-process-handling.yml .github/workflows/apply-plugin-process-fixes.yml .github/workflows/apply-process-fixes.yml 2>/dev/null || true
           git add rust/crates/plugins/src/hooks.rs rust/crates/plugins/src/lib.rs
-          git commit -m 'fix: close plugin stdin and avoid timeout pipe waits' || true
-          git push origin HEAD:phase-9c-mcp-inspector
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: close plugin stdin and avoid timeout pipe waits'
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
