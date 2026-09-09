@@ -299,8 +299,16 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 "--prompt-file cannot be combined with a command or inline prompt".to_string(),
             );
         }
-        let prompt = fs::read_to_string(&path)
-            .map_err(|error| format!("could not read prompt file {}: {error}", path.display()))?;
+        let prompt = if path.as_os_str() == "-" {
+            let mut prompt = String::new();
+            io::stdin()
+                .read_to_string(&mut prompt)
+                .map_err(|error| format!("could not read prompt from stdin: {error}"))?;
+            prompt
+        } else {
+            fs::read_to_string(&path)
+                .map_err(|error| format!("could not read prompt file {}: {error}", path.display()))?
+        };
         if prompt.trim().is_empty() {
             return Err("prompt file must not be empty".to_string());
         }

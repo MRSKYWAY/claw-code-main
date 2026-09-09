@@ -1671,7 +1671,7 @@ fn run_agent_job(job: &mut AgentJob) -> Result<(), String> {
         .subagent_type
         .as_deref()
         .unwrap_or("general-purpose");
-    let result = (|| {
+    let result: Result<String, String> = (|| {
         let mut runtime = build_agent_runtime(job)?
             .with_max_iterations(max_iterations_for_subagent(subagent_type));
         let summary = runtime
