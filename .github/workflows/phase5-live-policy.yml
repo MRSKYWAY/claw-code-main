@@ -1,26 +1,37 @@
 name: Phase 5 Live Policy Verification
 
 on:
-  push:
-    branches:
-      - phase-5-live-policy-enforcement
+  pull_request_target:
+    types: [opened, synchronize]
+    branches: [main]
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Wire policy into tool execution
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          fetch-depth: 0
+
+      - name: Wire live policy enforcement
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path('rust/crates/runtime/src/conversation.rs')
           s = p.read_text()
-          s = s.replace('use crate::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter};', 'use crate::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter, ToolPolicyDecision};')
+          s = s.replace(
+              'use crate::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter};',
+              'use crate::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter, ToolPolicyDecision};',
+          )
+
           old = '''                let result_message = match permission_outcome {
                     PermissionOutcome::Allow => {
                         let pre_hook_result = self.hook_runner.run_pre_tool_use(&tool_name, &input);
@@ -64,7 +75,12 @@ jobs:
                         ConversationMessage::tool_result(tool_use_id, tool_name, reason, true)
                     }
                 };'''
-          new = '''                let pre_hook_result = self.hook_runner.run_pre_tool_use(&tool_name, &input);
+
+          new = '''                let pre_hook_result = if matches!(permission_outcome, PermissionOutcome::Allow) {
+                    self.hook_runner.run_pre_tool_use(&tool_name, &input)
+                } else {
+                    HookRunResult::allow(Vec::new())
+                };
                 let policy_decision = ToolPolicyDecision::from_permission_and_hook(
                     &permission_outcome,
                     &pre_hook_result,
@@ -111,6 +127,7 @@ jobs:
                         ConversationMessage::tool_result(tool_use_id, tool_name, output, true)
                     }
                 };'''
+
           if old not in s:
               raise SystemExit('target execution block not found')
           s = s.replace(old, new, 1)
@@ -143,14 +160,27 @@ jobs:
                 .with_tool_requirement("blocked", PermissionMode::WorkspaceWrite),
             vec!["system".to_string()],
             &RuntimeFeatureConfig::default().with_hooks(RuntimeHookConfig::new(
-                vec![shell_snippet("printf 'hook should not run'; exit 2")],
+                vec![shell_snippet("printf 'hook denial'; exit 2")],
                 Vec::new(),
             )),
         );
 
-        let error = runtime.run_turn("use the tool", None).expect_err("denial should stop the turn");
-        assert!(error.to_string().contains("requires workspace-write permission"));
-        assert_eq!(runtime.session().messages.len(), 1);
+        let summary = runtime
+            .run_turn("use the tool", None)
+            .expect("permission denial should remain a tool result");
+        let result = &summary.tool_results[0];
+        assert!(result.is_error);
+        let output = result
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                ContentBlock::ToolResult { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .expect("tool result content should be present");
+        assert!(output.contains("requires workspace-write permission"));
+        assert!(!output.contains("hook denial"));
+        assert_eq!(runtime.session().messages.len(), 3);
     }
 
 '''
@@ -159,15 +189,19 @@ jobs:
           s = s.replace(marker, test + marker, 1)
           p.write_text(s)
           PY
+
       - name: Run runtime tests
-        run: cargo test --manifest-path rust/Cargo.toml -p runtime permissions --lib
+        run: cargo test --manifest-path rust/Cargo.toml -p runtime --lib
+
       - name: Check CLI
         run: cargo check --manifest-path rust/Cargo.toml -p claw-cli
+
       - name: Commit implementation
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add rust/crates/runtime/src/conversation.rs
-          git commit -m 'feat: enforce combined tool policy decisions' || exit 0
-          git push
+          git diff --cached --quiet && exit 0
+          git commit -m 'feat: enforce combined tool policy decisions'
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
