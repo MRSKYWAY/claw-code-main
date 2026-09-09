@@ -1,0 +1,54 @@
+name: phase-9b-repair6
+on:
+  push:
+    branches: [phase-9b-hook-management]
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply robust Phase 9B fixes and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          path = Path('rust/crates/commands/src/lib.rs')
+          text = path.read_text()
+
+          old_borrow = '''            let hooks = root.get_mut("hooks").and_then(serde_json::Value::as_object_mut);\n            if root.get("hooks").is_some() && hooks.is_none() {\n                return Err(io::Error::other(format!("{}: hooks must be an object", path.display())));\n            }\n            if root.get("hooks").is_none() {\n                root["hooks"] = serde_json::json!({});\n            }\n            let hooks = root.get_mut("hooks").and_then(serde_json::Value::as_object_mut).expect("hooks object");\n'''
+          new_borrow = '''            if let Some(value) = root.get("hooks") {\n                if !value.is_object() {\n                    return Err(io::Error::other(format!("{}: hooks must be an object", path.display())));\n                }\n            } else {\n                root["hooks"] = serde_json::json!({});\n            }\n            let hooks = root\n                .get_mut("hooks")\n                .and_then(serde_json::Value::as_object_mut)\n                .expect("hooks object");\n'''
+          if old_borrow in text:
+              text = text.replace(old_borrow, new_borrow, 1)
+
+          match_target = re.compile(r'(\| SlashCommand::Plugins \{ \.\. \}\n\s*\| SlashCommand::Agents \{ \.\. \}\n\s*\| SlashCommand::Skills \{ \.\. \}\n)(\s*\| SlashCommand::Unknown\(\_\) => None,)')
+          text, n = match_target.subn(r'\1        | SlashCommand::Hooks { .. }\n\2', text, count=1)
+
+          test_pattern = re.compile(r'''(SlashCommand::parse\("/hooks"\),\s*)Some\(SlashCommand::Config\s*\{\s*section:\s*Some\("hooks"\.to_string\(\)\)\s*\}\s*\)''')
+          text, test_n = test_pattern.subn(r'\1Some(SlashCommand::Hooks { action: None, event: None, command: None })', text, count=1)
+
+          if 'SlashCommand::Hooks {' not in text:
+              raise SystemExit('Hooks variant missing after repair')
+          path.write_text(text)
+          print(f'dispatch_fix={n} test_fix={test_n}')
+          PY
+          cd rust
+          cargo fmt --all
+          cargo check -p commands
+          cargo test -p commands --lib
+          cargo check -p claw-cli
+      - name: Commit validated repair and remove all temporary workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd ..
+          rm -f .github/workflows/phase-9b-fix.yml .github/workflows/phase-9b-fix2.yml .github/workflows/phase-9b-repair.yml .github/workflows/phase-9b-repair2.yml .github/workflows/phase-9b-repair3.yml .github/workflows/phase-9b-repair4.yml .github/workflows/phase-9b-repair5.yml .github/workflows/phase-9b-repair6.yml
+          rm -f .github/phase-9b-fix-trigger.txt .github/phase-9b-fix2-trigger.txt .github/phase-9b-trigger.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "fix: validate phase 9b hook management"
+          git push
