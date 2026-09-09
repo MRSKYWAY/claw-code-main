@@ -8,9 +8,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Skip validation commit rerun
+        if: github.event.head_commit.message == 'feat: add safe hook management commands'
+        run: echo 'Implementation commit already validated.'
       - name: Apply implementation
-        run: python3 scripts/phase_9b_impl.py
+        if: github.event.head_commit.message != 'feat: add safe hook management commands'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('scripts/phase_9b_impl.py').read_text()
+          source = source.split('\nPY\n', 1)[0]
+          exec(compile(source, 'scripts/phase_9b_impl.py', 'exec'))
+          PY
       - name: Format and verify
+        if: github.event.head_commit.message != 'feat: add safe hook management commands'
         run: |
           cd rust
           cargo fmt --all
@@ -18,6 +31,7 @@ jobs:
           cargo test -p commands --lib
           cargo check -p claw-cli
       - name: Commit source changes
+        if: github.event.head_commit.message != 'feat: add safe hook management commands'
         shell: bash
         run: |
           set -euo pipefail
