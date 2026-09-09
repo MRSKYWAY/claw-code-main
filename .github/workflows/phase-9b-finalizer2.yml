@@ -2,6 +2,8 @@ name: phase-9b-finalizer2
 on:
   push:
     branches: [phase-9b-hook-management]
+  pull_request:
+    branches: [main]
 jobs:
   finalize:
     runs-on: ubuntu-latest
@@ -19,6 +21,7 @@ jobs:
           commands = Path('rust/crates/commands/src/lib.rs')
           lines = commands.read_text().splitlines()
 
+          # Remove the stale duplicate /hooks parser arm.
           in_parse = False
           out = []
           i = 0
@@ -36,6 +39,7 @@ jobs:
               i += 1
           lines = out
 
+          # Fix mutable/immutable borrow overlap in hook mutation.
           start = next((i for i, line in enumerate(lines) if 'let hooks = root.get_mut("hooks").and_then(serde_json::Value::as_object_mut);' in line), None)
           if start is not None:
               end = next((i for i in range(start, min(start + 12, len(lines))) if 'expect("hooks object")' in lines[i]), None)
@@ -56,14 +60,14 @@ jobs:
               ]
 
           text = '\n'.join(lines) + '\n'
-          parse_pos = text.find('SlashCommand::parse("/hooks")')
-          if parse_pos < 0:
+          pos = text.find('SlashCommand::parse("/hooks")')
+          if pos < 0:
               raise SystemExit('hooks parser assertion not found')
-          parse_end = text.find('        );', parse_pos)
-          if parse_end < 0:
+          end = text.find('        );', pos)
+          if end < 0:
               raise SystemExit('hooks parser assertion end not found')
-          parse_block = text[parse_pos:parse_end + len('        );')]
-          if 'SlashCommand::Config' in parse_block:
+          block = text[pos:end + len('        );')]
+          if 'SlashCommand::Config' in block:
               replacement = '''SlashCommand::parse("/hooks"),
             Some(SlashCommand::Hooks {
                 action: None,
@@ -71,10 +75,10 @@ jobs:
                 command: None,
             })
         );'''
-              text = text[:parse_pos] + replacement + text[parse_end + len('        );'):]
+              text = text[:pos] + replacement + text[end + len('        );'):]
 
-          marker = 'pub fn handle_slash_command('
-          pos = text.find(marker)
+          # Ensure generic slash dispatcher handles the new Hooks variant.
+          pos = text.find('pub fn handle_slash_command(')
           if pos < 0:
               raise SystemExit('handle_slash_command not found')
           tail = text[pos:]
@@ -87,9 +91,9 @@ jobs:
               section = section.replace(target, '        | SlashCommand::Skills { .. }\n        | SlashCommand::Hooks { .. }\n        | SlashCommand::Unknown(_) => None,', 1)
               tail = section + tail[len(section):]
               text = text[:pos] + tail
-
           commands.write_text(text)
 
+          # Ensure resumed CLI handles the new variant exhaustively.
           cli = Path('rust/crates/claw-cli/src/main.rs')
           lines = cli.read_text().splitlines()
           start = next((i for i, line in enumerate(lines) if line.strip() == 'fn run_resume_command('), None)
@@ -108,6 +112,7 @@ jobs:
               lines.insert(unknown, '        | SlashCommand::Hooks { .. }')
           cli.write_text('\n'.join(lines) + '\n')
           PY
+
           cd rust
           cargo fmt --all
           cargo check -p commands
@@ -118,9 +123,9 @@ jobs:
         run: |
           set -euo pipefail
           rm -f .github/workflows/phase-9b-fix.yml .github/workflows/phase-9b-fix2.yml .github/workflows/phase-9b-repair.yml .github/workflows/phase-9b-repair2.yml .github/workflows/phase-9b-repair3.yml .github/workflows/phase-9b-repair4.yml .github/workflows/phase-9b-repair5.yml .github/workflows/phase-9b-repair6.yml .github/workflows/phase-9b-repair7.yml .github/workflows/phase-9b-repair8.yml .github/workflows/phase-9b-finalize.yml .github/workflows/phase-9b-finalizer2.yml .github/workflows/phase-9b-final-testfix.yml .github/workflows/phase-9b-lastfix.yml .github/workflows/phase-9b-repair-final.yml
-          rm -f .github/phase-9b-fix-trigger.txt .github/phase-9b-fix2-trigger.txt .github/phase-9b-trigger.txt .github/phase-9b-final-trigger.txt .github/phase-9b-repair-final-trigger.txt .github/phase-9b-repair8-trigger.txt .github/phase-9b-final-test-trigger.txt .github/phase-9b-deterministic-trigger.txt
+          rm -f .github/phase-9b-fix-trigger.txt .github/phase-9b-fix2-trigger.txt .github/phase-9b-trigger.txt .github/phase-9b-final-trigger.txt .github/phase-9b-repair-final-trigger.txt .github/phase-9b-repair8-trigger.txt .github/phase-9b-final-test-trigger.txt .github/phase-9b-deterministic-trigger.txt .github/phase-9b-finalizer2-trigger.txt
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
-          git commit -m "fix: finalize phase 9b hook management"
+          git commit -m "fix: repair merged phase 9b hooks"
           git push
