@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::{Display, Formatter};
 
 use crate::compact::{
@@ -138,8 +138,6 @@ where
             tool_executor,
             permission_policy,
             system_prompt,
-            // A provider can keep requesting tools after failures. Keep a bounded default so a
-            // single turn cannot consume an unbounded amount of time or API quota.
             max_iterations: 8,
             usage_tracker,
             hook_runner: HookRunner::from_feature_config(feature_config),
@@ -179,6 +177,7 @@ where
             };
             let events = self.api_client.stream(request)?;
             let (assistant_message, usage) = build_assistant_message(events)?;
+            validate_assistant_tool_uses(&assistant_message)?;
             if let Some(usage) = usage {
                 self.usage_tracker.record(usage);
             }
@@ -327,6 +326,30 @@ fn build_assistant_message(
         ConversationMessage::assistant_with_usage(blocks, usage),
         usage,
     ))
+}
+
+fn validate_assistant_tool_uses(message: &ConversationMessage) -> Result<(), RuntimeError> {
+    let mut tool_ids = HashSet::new();
+
+    for block in &message.blocks {
+        let ContentBlock::ToolUse { id, name, .. } = block else {
+            continue;
+        };
+
+        if id.trim().is_empty() {
+            return Err(RuntimeError::new("assistant tool call has an empty id"));
+        }
+        if name.trim().is_empty() {
+            return Err(RuntimeError::new("assistant tool call has an empty name"));
+        }
+        if !tool_ids.insert(id) {
+            return Err(RuntimeError::new(format!(
+                "assistant tool call id is duplicated: {id}"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn flush_text_block(text: &mut String, blocks: &mut Vec<ContentBlock>) {
@@ -524,6 +547,102 @@ mod tests {
     }
 
     #[test]
+    fn rejects_empty_tool_id_before_history_mutation() {
+        struct MalformedApi;
+        impl ApiClient for MalformedApi {
+            fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                Ok(vec![
+                    AssistantEvent::ToolUse {
+                        id: "   ".to_string(),
+                        name: "bash".to_string(),
+                        input: "echo hi".to_string(),
+                    },
+                    AssistantEvent::MessageStop,
+                ])
+            }
+        }
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            MalformedApi,
+            StaticToolExecutor::new(),
+            PermissionPolicy::new(PermissionMode::DangerFullAccess),
+            vec!["system".to_string()],
+        );
+        let error = runtime.run_turn("use the tool", None).expect_err("invalid id");
+
+        assert_eq!(error.to_string(), "assistant tool call has an empty id");
+        assert_eq!(runtime.session().messages.len(), 1);
+        assert_eq!(runtime.session().messages[0].role, MessageRole::User);
+    }
+
+    #[test]
+    fn rejects_empty_tool_name_before_history_mutation() {
+        struct MalformedApi;
+        impl ApiClient for MalformedApi {
+            fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                Ok(vec![
+                    AssistantEvent::ToolUse {
+                        id: "tool-1".to_string(),
+                        name: "".to_string(),
+                        input: "echo hi".to_string(),
+                    },
+                    AssistantEvent::MessageStop,
+                ])
+            }
+        }
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            MalformedApi,
+            StaticToolExecutor::new(),
+            PermissionPolicy::new(PermissionMode::DangerFullAccess),
+            vec!["system".to_string()],
+        );
+        let error = runtime.run_turn("use the tool", None).expect_err("invalid name");
+
+        assert_eq!(error.to_string(), "assistant tool call has an empty name");
+        assert_eq!(runtime.session().messages.len(), 1);
+    }
+
+    #[test]
+    fn rejects_duplicate_tool_ids_before_history_mutation() {
+        struct MalformedApi;
+        impl ApiClient for MalformedApi {
+            fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                Ok(vec![
+                    AssistantEvent::ToolUse {
+                        id: "tool-1".to_string(),
+                        name: "first".to_string(),
+                        input: "one".to_string(),
+                    },
+                    AssistantEvent::ToolUse {
+                        id: "tool-1".to_string(),
+                        name: "second".to_string(),
+                        input: "two".to_string(),
+                    },
+                    AssistantEvent::MessageStop,
+                ])
+            }
+        }
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            MalformedApi,
+            StaticToolExecutor::new(),
+            PermissionPolicy::new(PermissionMode::DangerFullAccess),
+            vec!["system".to_string()],
+        );
+        let error = runtime.run_turn("use both", None).expect_err("duplicate id");
+
+        assert_eq!(
+            error.to_string(),
+            "assistant tool call id is duplicated: tool-1"
+        );
+        assert_eq!(runtime.session().messages.len(), 1);
+    }
+
+    #[test]
     fn records_denied_tool_results_when_prompt_rejects() {
         struct RejectPrompter;
         impl PermissionPrompter for RejectPrompter {
@@ -628,10 +747,7 @@ mod tests {
         else {
             panic!("expected tool result block");
         };
-        assert!(
-            *is_error,
-            "hook denial should produce an error result: {output}"
-        );
+        assert!(*is_error, "hook denial should produce an error result: {output}");
         assert!(
             output.contains("denied tool") || output.contains("blocked by hook"),
             "unexpected hook denial output: {output:?}"
@@ -683,9 +799,7 @@ mod tests {
             )),
         );
 
-        let summary = runtime
-            .run_turn("use add", None)
-            .expect("tool loop succeeds");
+        let summary = runtime.run_turn("use add", None).expect("tool loop succeeds");
 
         assert_eq!(summary.tool_results.len(), 1);
         let ContentBlock::ToolResult {
@@ -694,22 +808,10 @@ mod tests {
         else {
             panic!("expected tool result block");
         };
-        assert!(
-            !*is_error,
-            "post hook should preserve non-error result: {output:?}"
-        );
-        assert!(
-            output.contains('4'),
-            "tool output missing value: {output:?}"
-        );
-        assert!(
-            output.contains("pre hook ran"),
-            "tool output missing pre hook feedback: {output:?}"
-        );
-        assert!(
-            output.contains("post hook ran"),
-            "tool output missing post hook feedback: {output:?}"
-        );
+        assert!(!*is_error, "post hook should preserve non-error result: {output:?}");
+        assert!(output.contains('4'), "tool output missing value: {output:?}");
+        assert!(output.contains("pre hook ran"), "tool output missing pre hook feedback: {output:?}");
+        assert!(output.contains("post hook ran"), "tool output missing post hook feedback: {output:?}");
     }
 
     #[test]
@@ -785,10 +887,7 @@ mod tests {
             max_estimated_tokens: 1,
         });
         assert!(result.summary.contains("Conversation summary"));
-        assert_eq!(
-            result.compacted_session.messages[0].role,
-            MessageRole::System
-        );
+        assert_eq!(result.compacted_session.messages[0].role, MessageRole::System);
     }
 
     #[cfg(windows)]
