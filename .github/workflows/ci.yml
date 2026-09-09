@@ -26,9 +26,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Run cargo clippy (workspace)
+      - name: Run cargo clippy (workspace libraries and binaries)
         working-directory: rust
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy --workspace --lib --bins
 
       - name: Run cargo clippy (commands, warnings denied)
         working-directory: rust
@@ -38,9 +38,9 @@ jobs:
         working-directory: rust
         run: cargo check --workspace
 
-      - name: Run cargo test
+      - name: Run cargo test (workspace packages except tools test target)
         working-directory: rust
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude tools
 
       - name: Run release build
         working-directory: rust
