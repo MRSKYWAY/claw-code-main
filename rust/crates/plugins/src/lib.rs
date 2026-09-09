@@ -313,7 +313,7 @@ impl PluginTool {
         }
 
         let mut child = process.spawn()?;
-        if let Some(stdin) = child.stdin.as_mut() {
+        if let Some(mut stdin) = child.stdin.take() {
             use std::io::Write as _;
             stdin.write_all(input_json.as_bytes())?;
         }
