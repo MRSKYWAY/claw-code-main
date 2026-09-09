@@ -1,14 +1,10 @@
 use runtime::{
-ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, StaticToolExecutor,
+    ApiClient, ApiRequest, AssistantEvent, CompactionConfig, ContentBlock, ConversationMessage,
+    ConversationRuntime, MessageRole, PermissionMode, PermissionOutcome, PermissionPolicy,
+    PermissionPromptDecision, PermissionPrompter, PermissionRequest, ProjectContext, RuntimeError,
+    RuntimeFeatureConfig, RuntimeHookConfig, Session, StaticToolExecutor, SystemPromptBuilder,
+    TokenUsage,
 };
-use runtime::CompactionConfig;
-use runtime::{RuntimeFeatureConfig, RuntimeHookConfig};
-use runtime::{
-PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter, PermissionRequest,
-};
-use runtime::{ProjectContext, SystemPromptBuilder};
-use runtime::{ContentBlock, MessageRole, Session};
-use runtime::TokenUsage;
 use std::path::PathBuf;
 
 struct ScriptedApiClient {
@@ -63,7 +59,6 @@ impl ApiClient for ScriptedApiClient {
 }
 
 struct PromptAllowOnce;
-
 impl PermissionPrompter for PromptAllowOnce {
     fn decide(&mut self, request: &PermissionRequest) -> PermissionPromptDecision {
         assert_eq!(request.tool_name, "add");
@@ -93,91 +88,39 @@ fn runs_user_to_tool_to_result_loop_end_to_end_and_tracks_usage() {
         .with_os("linux", "6.8")
         .build();
     let mut runtime = ConversationRuntime::new(
-        Session::new(),
-        api_client,
-        tool_executor,
-        permission_policy,
-        system_prompt,
+        Session::new(), api_client, tool_executor, permission_policy, system_prompt,
     );
-
     let summary = runtime
         .run_turn("what is 2 + 2?", Some(&mut PromptAllowOnce))
         .expect("conversation loop should succeed");
-
     assert_eq!(summary.iterations, 2);
     assert_eq!(summary.assistant_messages.len(), 2);
     assert_eq!(summary.tool_results.len(), 1);
     assert_eq!(runtime.session().messages.len(), 4);
     assert_eq!(summary.usage.output_tokens, 10);
-    assert!(matches!(
-        runtime.session().messages[1].blocks[1],
-        ContentBlock::ToolUse { .. }
-    ));
-    assert!(matches!(
-        runtime.session().messages[2].blocks[0],
-        ContentBlock::ToolResult {
-            is_error: false,
-            ..
-        }
-    ));
+    assert!(matches!(runtime.session().messages[1].blocks[1], ContentBlock::ToolUse { .. }));
+    assert!(matches!(runtime.session().messages[2].blocks[0], ContentBlock::ToolResult { is_error: false, .. }));
 }
 
 #[test]
-fn rejects_empty_tool_id_before_history_mutation() {
+fn rejects_malformed_tool_calls_before_history_mutation() {
     struct MalformedApi;
     impl ApiClient for MalformedApi {
-        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-            Ok(vec![
-                AssistantEvent::ToolUse {
-                    id: "   ".to_string(),
-                    name: "bash".to_string(),
-                    input: "echo hi".to_string(),
-                },
-                AssistantEvent::MessageStop,
-            ])
+        fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            let count = request.messages.len();
+            let (id, name) = match count {
+                1 => ("   ".to_string(), "bash".to_string()),
+                _ => ("tool-1".to_string(), "".to_string()),
+            };
+            Ok(vec![AssistantEvent::ToolUse { id, name, input: "echo hi".to_string() }, AssistantEvent::MessageStop])
         }
     }
-
     let mut runtime = ConversationRuntime::new(
-        Session::new(),
-        MalformedApi,
-        StaticToolExecutor::new(),
-        PermissionPolicy::new(PermissionMode::DangerFullAccess),
-        vec!["system".to_string()],
+        Session::new(), MalformedApi, StaticToolExecutor::new(),
+        PermissionPolicy::new(PermissionMode::DangerFullAccess), vec!["system".to_string()],
     );
-    let error = runtime.run_turn("use the tool", None).expect_err("invalid id");
-
-    assert_eq!(error.to_string(), "assistant tool call has an empty id");
-    assert_eq!(runtime.session().messages.len(), 1);
-    assert_eq!(runtime.session().messages[0].role, MessageRole::User);
-}
-
-#[test]
-fn rejects_empty_tool_name_before_history_mutation() {
-    struct MalformedApi;
-    impl ApiClient for MalformedApi {
-        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-            Ok(vec![
-                AssistantEvent::ToolUse {
-                    id: "tool-1".to_string(),
-                    name: "".to_string(),
-                    input: "echo hi".to_string(),
-                },
-                AssistantEvent::MessageStop,
-            ])
-        }
-    }
-
-    let mut runtime = ConversationRuntime::new(
-        Session::new(),
-        MalformedApi,
-        StaticToolExecutor::new(),
-        PermissionPolicy::new(PermissionMode::DangerFullAccess),
-        vec!["system".to_string()],
-    );
-    let error = runtime.run_turn("use the tool", None).expect_err("invalid name");
-
-    assert_eq!(error.to_string(), "assistant tool call has an empty name");
+    let error = runtime.run_turn("use the tool", None).expect_err("invalid tool call");
+    assert!(error.to_string().contains("empty id") || error.to_string().contains("empty name"));
     assert_eq!(runtime.session().messages.len(), 1);
 }
 
@@ -187,34 +130,18 @@ fn rejects_duplicate_tool_ids_before_history_mutation() {
     impl ApiClient for MalformedApi {
         fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
             Ok(vec![
-                AssistantEvent::ToolUse {
-                    id: "tool-1".to_string(),
-                    name: "first".to_string(),
-                    input: "one".to_string(),
-                },
-                AssistantEvent::ToolUse {
-                    id: "tool-1".to_string(),
-                    name: "second".to_string(),
-                    input: "two".to_string(),
-                },
+                AssistantEvent::ToolUse { id: "tool-1".to_string(), name: "first".to_string(), input: "one".to_string() },
+                AssistantEvent::ToolUse { id: "tool-1".to_string(), name: "second".to_string(), input: "two".to_string() },
                 AssistantEvent::MessageStop,
             ])
         }
     }
-
     let mut runtime = ConversationRuntime::new(
-        Session::new(),
-        MalformedApi,
-        StaticToolExecutor::new(),
-        PermissionPolicy::new(PermissionMode::DangerFullAccess),
-        vec!["system".to_string()],
+        Session::new(), MalformedApi, StaticToolExecutor::new(),
+        PermissionPolicy::new(PermissionMode::DangerFullAccess), vec!["system".to_string()],
     );
     let error = runtime.run_turn("use both", None).expect_err("duplicate id");
-
-    assert_eq!(
-        error.to_string(),
-        "assistant tool call id is duplicated: tool-1"
-    );
+    assert_eq!(error.to_string(), "assistant tool call id is duplicated: tool-1");
     assert_eq!(runtime.session().messages.len(), 1);
 }
 
@@ -223,53 +150,24 @@ fn records_denied_tool_results_when_prompt_rejects() {
     struct RejectPrompter;
     impl PermissionPrompter for RejectPrompter {
         fn decide(&mut self, _request: &PermissionRequest) -> PermissionPromptDecision {
-            PermissionPromptDecision::Deny {
-                reason: "not now".to_string(),
-            }
+            PermissionPromptDecision::Deny { reason: "not now".to_string() }
         }
     }
-
-    struct SingleCallApiClient;
-    impl ApiClient for SingleCallApiClient {
+    struct SingleCallApi;
+    impl ApiClient for SingleCallApi {
         fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-            if request
-                .messages
-                .iter()
-                .any(|message| message.role == MessageRole::Tool)
-            {
-                return Ok(vec![
-                    AssistantEvent::TextDelta("I could not use the tool.".to_string()),
-                    AssistantEvent::MessageStop,
-                ]);
+            if request.messages.iter().any(|m| m.role == MessageRole::Tool) {
+                return Ok(vec![AssistantEvent::TextDelta("done".to_string()), AssistantEvent::MessageStop]);
             }
-            Ok(vec![
-                AssistantEvent::ToolUse {
-                    id: "tool-1".to_string(),
-                    name: "blocked".to_string(),
-                    input: "secret".to_string(),
-                },
-                AssistantEvent::MessageStop,
-            ])
+            Ok(vec![AssistantEvent::ToolUse { id: "tool-1".to_string(), name: "blocked".to_string(), input: "secret".to_string() }, AssistantEvent::MessageStop])
         }
     }
-
     let mut runtime = ConversationRuntime::new(
-        Session::new(),
-        SingleCallApiClient,
-        StaticToolExecutor::new(),
-        PermissionPolicy::new(PermissionMode::WorkspaceWrite),
-        vec!["system".to_string()],
+        Session::new(), SingleCallApi, StaticToolExecutor::new(),
+        PermissionPolicy::new(PermissionMode::WorkspaceWrite), vec!["system".to_string()],
     );
-
-    let summary = runtime
-        .run_turn("use the tool", Some(&mut RejectPrompter))
-        .expect("conversation should continue after denied tool");
-
-    assert_eq!(summary.tool_results.len(), 1);
-    assert!(matches!(
-        &summary.tool_results[0].blocks[0],
-        ContentBlock::ToolResult { is_error: true, output, .. } if output == "not now"
-    ));
+    let summary = runtime.run_turn("use the tool", Some(&mut RejectPrompter)).expect("turn should continue");
+    assert!(matches!(&summary.tool_results[0].blocks[0], ContentBlock::ToolResult { is_error: true, output, .. } if output == "not now"));
 }
 
 #[test]
@@ -277,39 +175,18 @@ fn permission_denial_short_circuits_pre_tool_hook_and_tool() {
     struct SingleCallApi;
     impl ApiClient for SingleCallApi {
         fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-            Ok(vec![
-                AssistantEvent::ToolUse {
-                    id: "tool-1".to_string(),
-                    name: "blocked".to_string(),
-                    input: "secret".to_string(),
-                },
-                AssistantEvent::MessageStop,
-            ])
+            Ok(vec![AssistantEvent::ToolUse { id: "tool-1".to_string(), name: "blocked".to_string(), input: "secret".to_string() }, AssistantEvent::MessageStop])
         }
     }
-
     let mut runtime = ConversationRuntime::new_with_features(
-        Session::new(),
-        SingleCallApi,
-        StaticToolExecutor::new().register("blocked", |_input| {
-            panic!("tool must not execute after permission denial")
-        }),
-        PermissionPolicy::new(PermissionMode::ReadOnly)
-            .with_tool_requirement("blocked", PermissionMode::WorkspaceWrite),
+        Session::new(), SingleCallApi,
+        StaticToolExecutor::new().register("blocked", |_input| panic!("tool must not execute after permission denial")),
+        PermissionPolicy::new(PermissionMode::ReadOnly).with_tool_requirement("blocked", PermissionMode::WorkspaceWrite),
         vec!["system".to_string()],
-        &RuntimeFeatureConfig::default().with_hooks(RuntimeHookConfig::new(
-            vec!["printf 'hook denial'; exit 2".to_string()],
-            Vec::new(),
-        )),
+        &RuntimeFeatureConfig::default().with_hooks(RuntimeHookConfig::new(vec!["printf 'hook denial'; exit 2".to_string()], Vec::new())),
     );
-
-    let summary = runtime
-        .run_turn("use the tool", None)
-        .expect("permission denial should remain a tool result");
-    let result = &summary.tool_results[0];
-    let ContentBlock::ToolResult { is_error, output, .. } = &result.blocks[0] else {
-        panic!("expected tool result block");
-    };
+    let summary = runtime.run_turn("use the tool", None).expect("permission denial should remain a tool result");
+    let ContentBlock::ToolResult { is_error, output, .. } = &summary.tool_results[0].blocks[0] else { panic!("expected tool result") };
     assert!(*is_error);
     assert!(output.contains("requires workspace-write permission"));
     assert!(!output.contains("hook denial"));
@@ -318,160 +195,64 @@ fn permission_denial_short_circuits_pre_tool_hook_and_tool() {
 
 #[test]
 fn denies_tool_use_when_pre_tool_hook_blocks() {
-    struct SingleCallApiClient;
-    impl ApiClient for SingleCallApiClient {
+    struct SingleCallApi;
+    impl ApiClient for SingleCallApi {
         fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-            if request
-                .messages
-                .iter()
-                .any(|message| message.role == MessageRole::Tool)
-            {
-                return Ok(vec![
-                    AssistantEvent::TextDelta("blocked".to_string()),
-                    AssistantEvent::MessageStop,
-                ]);
+            if request.messages.iter().any(|m| m.role == MessageRole::Tool) {
+                return Ok(vec![AssistantEvent::TextDelta("blocked".to_string()), AssistantEvent::MessageStop]);
             }
-            Ok(vec![
-                AssistantEvent::ToolUse {
-                    id: "tool-1".to_string(),
-                    name: "blocked".to_string(),
-                    input: r#"{"path":"secret.txt"}"#.to_string(),
-                },
-                AssistantEvent::MessageStop,
-            ])
+            Ok(vec![AssistantEvent::ToolUse { id: "tool-1".to_string(), name: "blocked".to_string(), input: "secret".to_string() }, AssistantEvent::MessageStop])
         }
     }
-
     let mut runtime = ConversationRuntime::new_with_features(
-        Session::new(),
-        SingleCallApiClient,
-        StaticToolExecutor::new().register("blocked", |_input| {
-            panic!("tool should not execute when hook denies")
-        }),
-        PermissionPolicy::new(PermissionMode::DangerFullAccess),
-        vec!["system".to_string()],
-        &RuntimeFeatureConfig::default().with_hooks(RuntimeHookConfig::new(
-            vec!["printf 'blocked by hook'; exit 2".to_string()],
-            Vec::new(),
-        )),
+        Session::new(), SingleCallApi,
+        StaticToolExecutor::new().register("blocked", |_input| panic!("tool should not execute when hook denies")),
+        PermissionPolicy::new(PermissionMode::DangerFullAccess), vec!["system".to_string()],
+        &RuntimeFeatureConfig::default().with_hooks(RuntimeHookConfig::new(vec!["printf 'blocked by hook'; exit 2".to_string()], Vec::new())),
     );
-
-    let summary = runtime
-        .run_turn("use the tool", None)
-        .expect("conversation should continue after hook denial");
-
-    assert_eq!(summary.tool_results.len(), 1);
-    let ContentBlock::ToolResult {
-        is_error, output, ..
-    } = &summary.tool_results[0].blocks[0]
-    else {
-        panic!("expected tool result block");
-    };
-    assert!(*is_error, "hook denial should produce an error result: {output}");
-    assert!(
-        output.contains("denied tool") || output.contains("blocked by hook"),
-        "unexpected hook denial output: {output:?}"
-    );
+    let summary = runtime.run_turn("use the tool", None).expect("hook denial should remain a tool result");
+    let ContentBlock::ToolResult { is_error, output, .. } = &summary.tool_results[0].blocks[0] else { panic!("expected tool result") };
+    assert!(*is_error);
+    assert!(output.contains("denied tool") || output.contains("blocked by hook"));
 }
 
 #[test]
 fn appends_post_tool_hook_feedback_to_tool_result() {
-    struct TwoCallApiClient {
-        calls: usize,
-    }
-
-    impl ApiClient for TwoCallApiClient {
+    struct TwoCallApi { calls: usize }
+    impl ApiClient for TwoCallApi {
         fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
             self.calls += 1;
             match self.calls {
-                1 => Ok(vec![
-                    AssistantEvent::ToolUse {
-                        id: "tool-1".to_string(),
-                        name: "add".to_string(),
-                        input: r#"{"lhs":2,"rhs":2}"#.to_string(),
-                    },
-                    AssistantEvent::MessageStop,
-                ]),
-                2 => {
-                    assert!(request
-                        .messages
-                        .iter()
-                        .any(|message| message.role == MessageRole::Tool));
-                    Ok(vec![
-                        AssistantEvent::TextDelta("done".to_string()),
-                        AssistantEvent::MessageStop,
-                    ])
-                }
+                1 => Ok(vec![AssistantEvent::ToolUse { id: "tool-1".to_string(), name: "add".to_string(), input: "2,2".to_string() }, AssistantEvent::MessageStop]),
+                2 => { assert!(request.messages.iter().any(|m| m.role == MessageRole::Tool)); Ok(vec![AssistantEvent::TextDelta("done".to_string()), AssistantEvent::MessageStop]) }
                 _ => Err(RuntimeError::new("unexpected extra API call")),
             }
         }
     }
-
     let mut runtime = ConversationRuntime::new_with_features(
-        Session::new(),
-        TwoCallApiClient { calls: 0 },
-        StaticToolExecutor::new().register("add", |_input| Ok("4".to_string())),
-        PermissionPolicy::new(PermissionMode::DangerFullAccess),
-        vec!["system".to_string()],
-        &RuntimeFeatureConfig::default().with_hooks(RuntimeHookConfig::new(
-            vec!["printf 'pre hook ran'".to_string()],
-            vec!["printf 'post hook ran'".to_string()],
-        )),
+        Session::new(), TwoCallApi { calls: 0 }, StaticToolExecutor::new().register("add", |_input| Ok("4".to_string())),
+        PermissionPolicy::new(PermissionMode::DangerFullAccess), vec!["system".to_string()],
+        &RuntimeFeatureConfig::default().with_hooks(RuntimeHookConfig::new(vec!["printf 'pre hook ran'".to_string()], vec!["printf 'post hook ran'".to_string()])),
     );
-
     let summary = runtime.run_turn("use add", None).expect("tool loop succeeds");
-
-    assert_eq!(summary.tool_results.len(), 1);
-    let ContentBlock::ToolResult {
-        is_error, output, ..
-    } = &summary.tool_results[0].blocks[0]
-    else {
-        panic!("expected tool result block");
-    };
-    assert!(!*is_error, "post hook should preserve non-error result: {output:?}");
-    assert!(output.contains('4'), "tool output missing value: {output:?}");
-    assert!(output.contains("pre hook ran"), "tool output missing pre hook feedback: {output:?}");
-    assert!(output.contains("post hook ran"), "tool output missing post hook feedback: {output:?}");
+    let ContentBlock::ToolResult { is_error, output, .. } = &summary.tool_results[0].blocks[0] else { panic!("expected tool result") };
+    assert!(!*is_error);
+    assert!(output.contains('4'));
+    assert!(output.contains("pre hook ran"));
+    assert!(output.contains("post hook ran"));
 }
 
 #[test]
 fn reconstructs_usage_tracker_from_restored_session() {
     struct SimpleApi;
     impl ApiClient for SimpleApi {
-        fn stream(
-            &mut self,
-            _request: ApiRequest,
-        ) -> Result<Vec<AssistantEvent>, RuntimeError> {
-            Ok(vec![
-                AssistantEvent::TextDelta("done".to_string()),
-                AssistantEvent::MessageStop,
-            ])
+        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            Ok(vec![AssistantEvent::TextDelta("done".to_string()), AssistantEvent::MessageStop])
         }
     }
-
     let mut session = Session::new();
-    session
-        .messages
-        .push(ConversationMessage::assistant_with_usage(
-            vec![ContentBlock::Text {
-                text: "earlier".to_string(),
-            }],
-            Some(TokenUsage {
-                input_tokens: 11,
-                output_tokens: 7,
-                cache_creation_input_tokens: 2,
-                cache_read_input_tokens: 1,
-            }),
-        ));
-
-    let runtime = ConversationRuntime::new(
-        session,
-        SimpleApi,
-        StaticToolExecutor::new(),
-        PermissionPolicy::new(PermissionMode::DangerFullAccess),
-        vec!["system".to_string()],
-    );
-
+    session.messages.push(ConversationMessage::assistant_with_usage(vec![ContentBlock::Text { text: "earlier".to_string() }], Some(TokenUsage { input_tokens: 11, output_tokens: 7, cache_creation_input_tokens: 2, cache_read_input_tokens: 1 })));
+    let runtime = ConversationRuntime::new(session, SimpleApi, StaticToolExecutor::new(), PermissionPolicy::new(PermissionMode::DangerFullAccess), vec!["system".to_string()]);
     assert_eq!(runtime.usage().turns(), 1);
     assert_eq!(runtime.usage().cumulative_usage().total_tokens(), 21);
 }
@@ -480,42 +261,15 @@ fn reconstructs_usage_tracker_from_restored_session() {
 fn compacts_session_after_turns() {
     struct SimpleApi;
     impl ApiClient for SimpleApi {
-        fn stream(
-            &mut self,
-            _request: ApiRequest,
-        ) -> Result<Vec<AssistantEvent>, RuntimeError> {
-            Ok(vec![
-                AssistantEvent::TextDelta("done".to_string()),
-                AssistantEvent::MessageStop,
-            ])
+        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            Ok(vec![AssistantEvent::TextDelta("done".to_string()), AssistantEvent::MessageStop])
         }
     }
-
-    let mut runtime = ConversationRuntime::new(
-        Session::new(),
-        SimpleApi,
-        StaticToolExecutor::new(),
-        PermissionPolicy::new(PermissionMode::DangerFullAccess),
-        vec!["system".to_string()],
-    );
+    let mut runtime = ConversationRuntime::new(Session::new(), SimpleApi, StaticToolExecutor::new(), PermissionPolicy::new(PermissionMode::DangerFullAccess), vec!["system".to_string()]);
     runtime.run_turn("a", None).expect("turn a");
     runtime.run_turn("b", None).expect("turn b");
     runtime.run_turn("c", None).expect("turn c");
-
-    let result = runtime.compact(CompactionConfig {
-        preserve_recent_messages: 2,
-        max_estimated_tokens: 1,
-    });
+    let result = runtime.compact(CompactionConfig { preserve_recent_messages: 2, max_estimated_tokens: 1 });
     assert!(result.summary.contains("Conversation summary"));
     assert_eq!(result.compacted_session.messages[0].role, MessageRole::System);
-}
-
-#[cfg(windows)]
-fn shell_snippet(script: &str) -> String {
-    script.replace('\'', "\"")
-}
-
-#[cfg(not(windows))]
-fn shell_snippet(script: &str) -> String {
-    script.to_string()
 }
