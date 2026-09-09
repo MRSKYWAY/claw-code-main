@@ -1,0 +1,35 @@
+name: Phase 6C Recovery
+on: [push]
+permissions:
+  contents: write
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/phase-6c-mcp-recovery'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply MCP recovery
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('rust/crates/runtime/src/mcp_stdio.rs')
+          s=p.read_text()
+          old='''        let response =\n            {\n                let server = self.server_mut(&route.server_name)?;\n                let process = server.process.as_mut().ok_or_else(|| {\n                    McpServerManagerError::InvalidResponse {\n                        server_name: route.server_name.clone(),\n                        method: "tools/call",\n                        details: "server process missing after initialization".to_string(),\n                    }\n                })?;\n                process\n                    .call_tool(\n                        request_id,\n                        McpToolCallParams {\n                            name: route.raw_name,\n                            arguments,\n                            meta: None,\n                        },\n                    )\n                    .await?\n            };\n        Ok(response)'''
+          new='''        let response = self.call_tool_once(&route.server_name, &route.raw_name, arguments.clone()).await;\n        match response {\n            Ok(value) => Ok(value),\n            Err(first_error) => {\n                self.recover_server(&route.server_name).await.map_err(|recovery_error| {\n                    McpServerManagerError::InvalidResponse {\n                        server_name: route.server_name.clone(),\n                        method: "tools/call",\n                        details: format!("initial MCP call failed: {first_error}; recovery failed: {recovery_error}"),\n                    }\n                })?;\n                self.call_tool_once(&route.server_name, &route.raw_name, arguments).await\n            }\n        }'''
+          if old not in s: raise SystemExit('call_tool pattern missing')
+          s=s.replace(old,new,1)
+          marker='''    fn clear_routes_for_server(&mut self, server_name: &str) {'''
+          insert='''    async fn call_tool_once(\n        &mut self,\n        server_name: &str,\n        raw_name: &str,\n        arguments: Option<JsonValue>,\n    ) -> Result<JsonRpcResponse<McpToolCallResult>, McpServerManagerError> {\n        self.ensure_server_ready(server_name).await?;\n        let request_id = self.take_request_id();\n        let response = {\n            let server = self.server_mut(server_name)?;\n            let process = server.process.as_mut().ok_or_else(|| McpServerManagerError::InvalidResponse {\n                server_name: server_name.to_string(), method: "tools/call", details: "server process missing after initialization".to_string(),\n            })?;\n            process.call_tool(request_id, McpToolCallParams { name: raw_name.to_string(), arguments, meta: None }).await?\n        };\n        if response.error.is_some() {\n            return Err(McpServerManagerError::JsonRpc { server_name: server_name.to_string(), method: "tools/call", error: response.error.clone().expect("checked above") });\n        }\n        if response.result.is_none() {\n            return Err(McpServerManagerError::InvalidResponse { server_name: server_name.to_string(), method: "tools/call", details: "missing result payload".to_string() });\n        }\n        Ok(response)\n    }\n\n    async fn recover_server(&mut self, server_name: &str) -> Result<(), McpServerManagerError> {\n        let process = self.server_mut(server_name)?.process.take();\n        if let Some(mut process) = process { let _ = process.shutdown().await; }\n        self.server_mut(server_name)?.initialized = false;\n        self.ensure_server_ready(server_name).await?;\n        self.rediscover_server_tools(server_name).await\n    }\n\n    async fn rediscover_server_tools(&mut self, server_name: &str) -> Result<(), McpServerManagerError> {\n        self.clear_routes_for_server(server_name);\n        let request_id = self.take_request_id();\n        let response = {\n            let server = self.server_mut(server_name)?;\n            let process = server.process.as_mut().ok_or_else(|| McpServerManagerError::InvalidResponse { server_name: server_name.to_string(), method: "tools/list", details: "server process missing after recovery".to_string() })?;\n            process.list_tools(request_id, Some(McpListToolsParams { cursor: None })).await?\n        };\n        if let Some(error) = response.error { return Err(McpServerManagerError::JsonRpc { server_name: server_name.to_string(), method: "tools/list", error }); }\n        let result = response.result.ok_or_else(|| McpServerManagerError::InvalidResponse { server_name: server_name.to_string(), method: "tools/list", details: "missing result payload after recovery".to_string() })?;\n        for tool in result.tools {\n            let qualified_name = mcp_tool_name(server_name, &tool.name);\n            self.tool_index.insert(qualified_name, ToolRoute { server_name: server_name.to_string(), raw_name: tool.name });\n        }\n        Ok(())\n    }\n\n'''
+          if marker not in s: raise SystemExit('marker missing')
+          s=s.replace(marker,insert+marker,1)
+          p.write_text(s)
+          PY
+      - name: Verify
+        run: cargo check --manifest-path rust/Cargo.toml -p runtime -p tools -p claw-cli
+      - name: Commit source changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/runtime/src/mcp_stdio.rs
+          git commit -m 'feat: recover failed MCP stdio servers'
+          git push
