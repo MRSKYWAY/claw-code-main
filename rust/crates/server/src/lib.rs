@@ -546,7 +546,10 @@ fn load_store(path: &FsPath) -> Result<PersistedStore, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{app, AppState, CreateSessionResponse, ListModelsResponse, ListSessionsResponse, Session, SessionDetailsResponse};
+    use super::{
+        app, AppState, CreateSessionResponse, ListModelsResponse, ListSessionsResponse,
+        RuntimeStatusResponse, Session, SessionDetailsResponse,
+    };
     use reqwest::Client;
     use std::fs;
     use std::net::SocketAddr;
@@ -584,7 +587,11 @@ mod tests {
                 .expect("server should run");
             });
 
-            Self { address, handle, store_path }
+            Self {
+                address,
+                handle,
+                store_path,
+            }
         }
 
         fn url(&self, path: &str) -> String {
@@ -642,8 +649,11 @@ mod tests {
     async fn creates_and_lists_sessions() {
         let server = TestServer::spawn().await;
         let client = Client::new();
+
+        // given
         let created = create_session(&client, &server).await;
 
+        // when
         let sessions = client
             .get(server.url("/sessions"))
             .send()
@@ -665,6 +675,7 @@ mod tests {
             .await
             .expect("details response should parse");
 
+        // then
         assert_eq!(created.session_id, "session-1");
         assert_eq!(sessions.sessions.len(), 1);
         assert_eq!(sessions.sessions[0].id, created.session_id);
@@ -676,6 +687,7 @@ mod tests {
     #[tokio::test]
     async fn serves_the_local_web_ui() {
         let server = TestServer::spawn().await;
+
         let page = Client::new()
             .get(server.url("/"))
             .send()
@@ -713,5 +725,102 @@ mod tests {
             .models
             .iter()
             .any(|model| { model.alias == "gemini-flash" && model.model == "gemini-3.7-flash" }));
+    }
+
+    #[tokio::test]
+    async fn serves_runtime_status_from_live_state() {
+        let server = TestServer::spawn().await;
+        let client = Client::new();
+        let _created = create_session(&client, &server).await;
+
+        let status = client
+            .get(server.url("/status"))
+            .send()
+            .await
+            .expect("status request should succeed")
+            .error_for_status()
+            .expect("status request should return success")
+            .json::<RuntimeStatusResponse>()
+            .await
+            .expect("status response should parse");
+
+        assert_eq!(status.status, "ok");
+        assert_eq!(status.session_count, 1);
+        assert_eq!(status.message_count, 0);
+        assert!(status.model_count > 0);
+        assert_eq!(status.agent_count, 0);
+    }
+
+    #[tokio::test]
+    async fn reloads_sessions_from_the_local_store() {
+        let store_path = test_store_path();
+        let state = AppState::with_storage_path(store_path.clone());
+        let session_id = state.allocate_session_id();
+        let mut session = Session::new(session_id.clone());
+        session
+            .conversation
+            .messages
+            .push(runtime::ConversationMessage::user_text("persist this"));
+        state.sessions.write().await.insert(session_id, session);
+        state.persist().await.expect("store should save");
+
+        let restored = AppState::with_storage_path(store_path.clone());
+        let sessions = restored.sessions.read().await;
+        let restored_session = sessions.get("session-1").expect("session should reload");
+        assert_eq!(restored_session.conversation.messages.len(), 1);
+        drop(sessions);
+        let _ = fs::remove_file(store_path);
+    }
+
+    #[tokio::test]
+    async fn streams_message_events_and_persists_message_flow() {
+        let server = TestServer::spawn().await;
+        let client = Client::new();
+
+        // given
+        let created = create_session(&client, &server).await;
+        let mut response = client
+            .get(server.url(&format!("/sessions/{}/events", created.session_id)))
+            .send()
+            .await
+            .expect("events request should succeed")
+            .error_for_status()
+            .expect("events request should return success");
+        let mut buffer = String::new();
+        let snapshot_frame = next_sse_frame(&mut response, &mut buffer).await;
+
+        // when
+        let send_status = client
+            .post(server.url(&format!("/sessions/{}/message", created.session_id)))
+            .json(&super::SendMessageRequest {
+                message: "hello from test".to_string(),
+            })
+            .send()
+            .await
+            .expect("message request should succeed")
+            .status();
+        let message_frame = next_sse_frame(&mut response, &mut buffer).await;
+        let details = client
+            .get(server.url(&format!("/sessions/{}", created.session_id)))
+            .send()
+            .await
+            .expect("details request should succeed")
+            .error_for_status()
+            .expect("details request should return success")
+            .json::<SessionDetailsResponse>()
+            .await
+            .expect("details response should parse");
+
+        // then
+        assert_eq!(send_status, reqwest::StatusCode::NO_CONTENT);
+        assert!(snapshot_frame.contains("event: snapshot"));
+        assert!(snapshot_frame.contains("\"session_id\":\"session-1\""));
+        assert!(message_frame.contains("event: message"));
+        assert!(message_frame.contains("hello from test"));
+        assert_eq!(details.session.messages.len(), 1);
+        assert_eq!(
+            details.session.messages[0],
+            runtime::ConversationMessage::user_text("hello from test")
+        );
     }
 }
