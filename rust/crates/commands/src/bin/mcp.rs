@@ -20,7 +20,9 @@ fn render_mcp_report(
 
     if servers.is_empty() {
         lines.push("  No MCP servers are configured.".to_string());
-        lines.push("  Add a server to project/user Claw settings, then rerun this command.".to_string());
+        lines.push(
+            "  Add a server to project/user Claw settings, then rerun this command.".to_string(),
+        );
         return lines.join("\n");
     }
 
@@ -82,7 +84,7 @@ fn append_server_target(lines: &mut Vec<String>, server: &ScopedMcpServerConfig)
 #[cfg(test)]
 mod tests {
     use super::{format_config_scope, render_mcp_report, transport_name};
-    use runtime::{ConfigSource, McpTransport, ScopedMcpServerConfig};
+    use runtime::{ConfigSource, McpTransport};
     use std::collections::BTreeMap;
 
     #[test]
@@ -104,12 +106,5 @@ mod tests {
         assert_eq!(transport_name(McpTransport::Ws), "websocket");
         assert_eq!(transport_name(McpTransport::Sdk), "sdk");
         assert_eq!(transport_name(McpTransport::ManagedProxy), "managed-proxy");
-    }
-
-    #[allow(clippy::missing_const_for_fn)]
-    fn _typecheck_server_shape(server: ScopedMcpServerConfig) {
-        let mut servers = BTreeMap::new();
-        servers.insert("example".to_string(), server);
-        let _ = render_mcp_report(&servers);
     }
 }
