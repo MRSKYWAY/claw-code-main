@@ -19,10 +19,10 @@ fn temp_path(name: &str) -> PathBuf {
 }
 
 #[test]
-fn skill_resolves_from_configured_path_and_preserves_args() {
+fn skill_resolves_from_codex_home_and_preserves_args() {
     let _guard = env_lock().lock().expect("env lock");
-    let root = temp_path("configured");
-    let skill_dir = root.join("demo");
+    let root = temp_path("codex-home");
+    let skill_dir = root.join("skills").join("demo");
     fs::create_dir_all(&skill_dir).expect("create skill directory");
     fs::write(
         skill_dir.join("SKILL.md"),
@@ -30,8 +30,8 @@ fn skill_resolves_from_configured_path_and_preserves_args() {
     )
     .expect("write skill");
 
-    let previous = env::var_os("CLAW_SKILL_PATHS");
-    env::set_var("CLAW_SKILL_PATHS", &root);
+    let previous = env::var_os("CODEX_HOME");
+    env::set_var("CODEX_HOME", &root);
 
     let result = tools::execute_tool(
         "Skill",
@@ -47,14 +47,14 @@ fn skill_resolves_from_configured_path_and_preserves_args() {
     assert!(output["path"].as_str().expect("path").ends_with("demo/SKILL.md"));
 
     match previous {
-        Some(value) => env::set_var("CLAW_SKILL_PATHS", value),
-        None => env::remove_var("CLAW_SKILL_PATHS"),
+        Some(value) => env::set_var("CODEX_HOME", value),
+        None => env::remove_var("CODEX_HOME"),
     }
     let _ = fs::remove_dir_all(root);
 }
 
 #[test]
-fn skill_name_rejects_path_traversal_and_absolute_paths() {
+fn skill_name_rejects_path_traversal_and_separator_forms() {
     let _guard = env_lock().lock().expect("env lock");
 
     for skill in ["../secret", "nested/secret", r"nested\\secret", ".", ".."] {
@@ -71,13 +71,13 @@ fn skill_name_rejects_path_traversal_and_absolute_paths() {
 fn skill_lookup_is_case_insensitive() {
     let _guard = env_lock().lock().expect("env lock");
     let root = temp_path("case");
-    let skill_dir = root.join("MySkill");
+    let skill_dir = root.join("skills").join("MySkill");
     fs::create_dir_all(&skill_dir).expect("create skill directory");
     fs::write(skill_dir.join("SKILL.md"), "description: Case skill\n\ncontent")
         .expect("write skill");
 
-    let previous = env::var_os("CLAW_SKILL_PATHS");
-    env::set_var("CLAW_SKILL_PATHS", &root);
+    let previous = env::var_os("CODEX_HOME");
+    env::set_var("CODEX_HOME", &root);
 
     let result = tools::execute_tool("Skill", &serde_json::json!({"skill": "myskill"}))
         .expect("case-insensitive skill lookup should resolve");
@@ -85,8 +85,8 @@ fn skill_lookup_is_case_insensitive() {
     assert_eq!(output["description"], "Case skill");
 
     match previous {
-        Some(value) => env::set_var("CLAW_SKILL_PATHS", value),
-        None => env::remove_var("CLAW_SKILL_PATHS"),
+        Some(value) => env::set_var("CODEX_HOME", value),
+        None => env::remove_var("CODEX_HOME"),
     }
     let _ = fs::remove_dir_all(root);
 }
