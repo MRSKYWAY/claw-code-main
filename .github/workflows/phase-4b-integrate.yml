@@ -16,13 +16,11 @@ jobs:
           ref: phase-4b-stdin-cli
           fetch-depth: 0
       - name: Patch stdin prompt source
-        shell: bash
         run: |
-          python3 <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
           p = Path("rust/crates/claw-cli/src/main.rs")
           s = p.read_text()
-
           old = '''        let prompt = fs::read_to_string(&path)
             .map_err(|error| format!("could not read prompt file {}: {error}", path.display()))?;'''
           new = '''        let prompt = if path.as_os_str() == "-" {
@@ -38,7 +36,6 @@ jobs:
           if old not in s:
               raise SystemExit("prompt-file read block not found")
           s = s.replace(old, new, 1)
-
           marker = '''fn join_optional_args(args: &[String]) -> Option<String> {'''
           tests = r'''
 #[cfg(test)]
@@ -67,7 +64,6 @@ mod stdin_prompt_tests {
 '''
           if "mod stdin_prompt_tests" not in s:
               s = s.replace(marker, tests + marker, 1)
-
           p.write_text(s)
           PY
       - name: Verify formatting and tests
