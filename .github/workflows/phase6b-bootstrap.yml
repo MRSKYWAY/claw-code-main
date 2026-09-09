@@ -22,19 +22,26 @@ jobs:
           needle = '    pub fn definitions(&self, allowed_tools: Option<&BTreeSet<String>>) -> Vec<ToolDefinition> {'
           insert = '''    pub fn with_mcp_tools(mut self, tools: Vec<runtime::McpTool>, manager: runtime::McpServerManager) -> Self {\n        self.mcp_tools = tools;\n        self.mcp_manager = Some(Arc::new(Mutex::new(manager)));\n        self\n    }\n\n'''
           text = text.replace(needle, insert + needle, 1)
-          definitions = '''        let mcp = self.mcp_tools.iter().filter(|tool| allowed_tools.is_none_or(|allowed| allowed.contains(&tool.name))).map(|tool| ToolDefinition {\n            name: tool.name.clone(),\n            description: tool.description.clone(),\n            input_schema: tool.input_schema.clone().unwrap_or_else(|| serde_json::json!({"type":"object"})),\n        });\n'''
-          text = text.replace('        let plugin = self\n            .plugin_tools', definitions + '        let plugin = self\n            .plugin_tools', 1)
-          text = text.replace('        builtin.chain(plugin).collect()', '        builtin.chain(mcp).chain(plugin).collect()', 1)
-          permission = '''        let mcp = self.mcp_tools.iter().filter(|tool| allowed_tools.is_none_or(|allowed| allowed.contains(&tool.name))).map(|tool| (tool.name.clone(), PermissionMode::WorkspaceWrite));\n'''
-          text = text.replace('        let plugin = self\n            .plugin_tools', permission + '        let plugin = self\n            .plugin_tools', 1)
-          text = text.replace('        builtin.chain(plugin).collect()', '        builtin.chain(mcp).chain(plugin).collect()', 1)
-          old = '''        self.plugin_tools\n            .iter()\n            .find(|tool| tool.definition().name == name)\n            .ok_or_else(|| format!("unsupported tool: {name}"))?\n            .execute(input)\n            .map_err(|error| error.to_string())'''
-          new = '''        if let Some(manager) = &self.mcp_manager {\n            if self.mcp_tools.iter().any(|tool| tool.name == name) {\n                let mut guard = manager.lock().map_err(|_| "MCP manager lock poisoned".to_string())?;\n                let runtime = tokio::runtime::Runtime::new().map_err(|error| error.to_string())?;\n                let response = runtime.block_on(guard.call_tool(name, Some(input.clone()))).map_err(|error| error.to_string())?;\n                if let Some(error) = response.error {\n                    return Err(format!("{} ({})", error.message, error.code));\n                }\n                let result = response.result.ok_or_else(|| "MCP tool response missing result payload".to_string())?;\n                let output = runtime::McpToolOutput::from_result(result);\n                let rendered = output.render_for_model();\n                return if output.is_error { Err(rendered) } else { Ok(rendered) };\n            }\n        }\n        self.plugin_tools\n            .iter()\n            .find(|tool| tool.definition().name == name)\n            .ok_or_else(|| format!("unsupported tool: {name}"))?\n            .execute(input)\n            .map_err(|error| error.to_string())'''
-          if old not in text:
+          normalize_old = '''            .chain(\n                self.plugin_tools\n                    .iter()\n                    .map(|tool| tool.definition().name.clone()),\n            )'''
+          normalize_new = '''            .chain(self.plugin_tools.iter().map(|tool| tool.definition().name.clone()))\n            .chain(self.mcp_tools.iter().map(|tool| tool.name.clone()))'''
+          if normalize_old not in text:
+              raise SystemExit('normalize chain pattern missing')
+          text = text.replace(normalize_old, normalize_new, 1)
+          def_start = text.index('    pub fn definitions(')
+          perm_start = text.index('    pub fn permission_specs(', def_start)
+          exec_start = text.index('    pub fn execute(', perm_start)
+          definitions = text[def_start:perm_start]
+          definitions = definitions.replace('        let plugin = self\n', '        let mcp = self.mcp_tools.iter().filter(|tool| allowed_tools.is_none_or(|allowed| allowed.contains(&tool.name))).map(|tool| ToolDefinition {\n            name: tool.name.clone(),\n            description: tool.description.clone(),\n            input_schema: tool.input_schema.clone().unwrap_or_else(|| serde_json::json!({"type":"object"})),\n        });\n        let plugin = self\n', 1)
+          definitions = definitions.replace('        builtin.chain(plugin).collect()', '        builtin.chain(mcp).chain(plugin).collect()', 1)
+          permission = text[perm_start:exec_start]
+          permission = permission.replace('        let plugin = self\n', '        let mcp = self.mcp_tools.iter().filter(|tool| allowed_tools.is_none_or(|allowed| allowed.contains(&tool.name))).map(|tool| (tool.name.clone(), PermissionMode::WorkspaceWrite));\n        let plugin = self\n', 1)
+          permission = permission.replace('        builtin.chain(plugin).collect()', '        builtin.chain(mcp).chain(plugin).collect()', 1)
+          text = text[:def_start] + definitions + permission + text[exec_start:]
+          exec_old = '''        self.plugin_tools\n            .iter()\n            .find(|tool| tool.definition().name == name)\n            .ok_or_else(|| format!("unsupported tool: {name}"))?\n            .execute(input)\n            .map_err(|error| error.to_string())'''
+          exec_new = '''        if let Some(manager) = &self.mcp_manager {\n            if self.mcp_tools.iter().any(|tool| tool.name == name) {\n                let mut guard = manager.lock().map_err(|_| "MCP manager lock poisoned".to_string())?;\n                let runtime = tokio::runtime::Runtime::new().map_err(|error| error.to_string())?;\n                let response = runtime.block_on(guard.call_tool(name, Some(input.clone()))).map_err(|error| error.to_string())?;\n                if let Some(error) = response.error {\n                    return Err(format!("{} ({})", error.message, error.code));\n                }\n                let result = response.result.ok_or_else(|| "MCP tool response missing result payload".to_string())?;\n                let output = runtime::McpToolOutput::from_result(result);\n                let rendered = output.render_for_model();\n                return if output.is_error { Err(rendered) } else { Ok(rendered) };\n            }\n        }\n        self.plugin_tools\n            .iter()\n            .find(|tool| tool.definition().name == name)\n            .ok_or_else(|| format!("unsupported tool: {name}"))?\n            .execute(input)\n            .map_err(|error| error.to_string())'''
+          if exec_old not in text:
               raise SystemExit('execute fallback pattern missing')
-          text = text.replace(old, new, 1)
-          normalize = '''            .chain(self.mcp_tools.iter().map(|tool| tool.name.clone()))\n'''
-          text = text.replace('                self.plugin_tools\n                    .iter()\n                    .map(|tool| tool.definition().name.clone()),', '                self.plugin_tools\n                    .iter()\n                    .map(|tool| tool.definition().name.clone()),\n                self.mcp_tools.iter().map(|tool| tool.name.clone()),', 1)
+          text = text.replace(exec_old, exec_new, 1)
           tools.write_text(text)
 
           main = root / 'rust/crates/claw-cli/src/main.rs'
