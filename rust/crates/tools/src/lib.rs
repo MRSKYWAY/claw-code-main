@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use api::{
@@ -61,17 +61,23 @@ pub struct ToolSpec {
     pub required_permission: PermissionMode,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct GlobalToolRegistry {
     plugin_tools: Vec<PluginTool>,
+    mcp_tools: Vec<runtime::McpTool>,
+    mcp_manager: Option<Arc<Mutex<runtime::McpServerManager>>>,
+}
+
+impl PartialEq for GlobalToolRegistry {
+    fn eq(&self, other: &Self) -> bool {
+        self.plugin_tools == other.plugin_tools && self.mcp_tools == other.mcp_tools
+    }
 }
 
 impl GlobalToolRegistry {
     #[must_use]
     pub fn builtin() -> Self {
-        Self {
-            plugin_tools: Vec::new(),
-        }
+        Self { plugin_tools: Vec::new(), mcp_tools: Vec::new(), mcp_manager: None }
     }
 
     pub fn with_plugin_tools(plugin_tools: Vec<PluginTool>) -> Result<Self, String> {
@@ -93,7 +99,7 @@ impl GlobalToolRegistry {
             }
         }
 
-        Ok(Self { plugin_tools })
+        Ok(Self { plugin_tools, mcp_tools: Vec::new(), mcp_manager: None })
     }
 
     pub fn normalize_allowed_tools(
@@ -108,11 +114,8 @@ impl GlobalToolRegistry {
         let canonical_names = builtin_specs
             .iter()
             .map(|spec| spec.name.to_string())
-            .chain(
-                self.plugin_tools
-                    .iter()
-                    .map(|tool| tool.definition().name.clone()),
-            )
+            .chain(self.plugin_tools.iter().map(|tool| tool.definition().name.clone()))
+            .chain(self.mcp_tools.iter().map(|tool| tool.name.clone()))
             .collect::<Vec<_>>();
         let mut name_map = canonical_names
             .iter()
@@ -150,6 +153,12 @@ impl GlobalToolRegistry {
     }
 
     #[must_use]
+    pub fn with_mcp_tools(mut self, tools: Vec<runtime::McpTool>, manager: runtime::McpServerManager) -> Self {
+        self.mcp_tools = tools;
+        self.mcp_manager = Some(Arc::new(Mutex::new(manager)));
+        self
+    }
+
     pub fn definitions(&self, allowed_tools: Option<&BTreeSet<String>>) -> Vec<ToolDefinition> {
         let builtin = mvp_tool_specs()
             .into_iter()
@@ -160,6 +169,11 @@ impl GlobalToolRegistry {
                 description: Some(spec.description.to_string()),
                 input_schema: spec.input_schema,
             });
+        let mcp = self.mcp_tools.iter().filter(|tool| allowed_tools.is_none_or(|allowed| allowed.contains(&tool.name))).map(|tool| ToolDefinition {
+            name: tool.name.clone(),
+            description: tool.description.clone(),
+            input_schema: tool.input_schema.clone().unwrap_or_else(|| serde_json::json!({"type":"object"})),
+        });
         let plugin = self
             .plugin_tools
             .iter()
@@ -172,7 +186,7 @@ impl GlobalToolRegistry {
                 description: tool.definition().description.clone(),
                 input_schema: tool.definition().input_schema.clone(),
             });
-        builtin.chain(plugin).collect()
+        builtin.chain(mcp).chain(plugin).collect()
     }
 
     #[must_use]
@@ -185,6 +199,7 @@ impl GlobalToolRegistry {
             .filter(|spec| tool_is_available_on_current_platform(spec.name))
             .filter(|spec| allowed_tools.is_none_or(|allowed| allowed.contains(spec.name)))
             .map(|spec| (spec.name.to_string(), spec.required_permission));
+        let mcp = self.mcp_tools.iter().filter(|tool| allowed_tools.is_none_or(|allowed| allowed.contains(&tool.name))).map(|tool| (tool.name.clone(), PermissionMode::WorkspaceWrite));
         let plugin = self
             .plugin_tools
             .iter()
@@ -198,12 +213,26 @@ impl GlobalToolRegistry {
                     permission_mode_from_plugin(tool.required_permission()),
                 )
             });
-        builtin.chain(plugin).collect()
+        builtin.chain(mcp).chain(plugin).collect()
     }
 
     pub fn execute(&self, name: &str, input: &Value) -> Result<String, String> {
         if mvp_tool_specs().iter().any(|spec| spec.name == name) {
             return execute_tool(name, input);
+        }
+        if let Some(manager) = &self.mcp_manager {
+            if self.mcp_tools.iter().any(|tool| tool.name == name) {
+                let mut guard = manager.lock().map_err(|_| "MCP manager lock poisoned".to_string())?;
+                let runtime = tokio::runtime::Runtime::new().map_err(|error| error.to_string())?;
+                let response = runtime.block_on(guard.call_tool(name, Some(input.clone()))).map_err(|error| error.to_string())?;
+                if let Some(error) = response.error {
+                    return Err(format!("{} ({})", error.message, error.code));
+                }
+                let result = response.result.ok_or_else(|| "MCP tool response missing result payload".to_string())?;
+                let output = runtime::McpToolOutput::from_result(result);
+                let rendered = output.render_for_model();
+                return if output.is_error { Err(rendered) } else { Ok(rendered) };
+            }
         }
         self.plugin_tools
             .iter()
