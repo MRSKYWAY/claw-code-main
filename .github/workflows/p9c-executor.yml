@@ -1,0 +1,121 @@
+name: p9c-executor
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: write
+jobs:
+  implement:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'phase-9c-final'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+      - name: Apply and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('rust/crates/claw-cli/src/main.rs')
+          s = p.read_text()
+          enum_old = """enum CliOutputFormat {
+              Text,
+              Json,
+          }""".replace('            ','')
+          enum_new = """enum CliOutputFormat {
+              Text,
+              Json,
+              Ndjson,
+          }""".replace('            ','')
+          assert enum_old in s
+          s = s.replace(enum_old, enum_new, 1)
+          parse_old = '''            "text" => Ok(Self::Text),
+            "json" => Ok(Self::Json),'''
+          parse_new = '''            "text" => Ok(Self::Text),
+            "json" => Ok(Self::Json),
+            "ndjson" => Ok(Self::Ndjson),'''
+          assert parse_old in s
+          s = s.replace(parse_old, parse_new, 1)
+          s = s.replace('unsupported value for --output-format: {other} (expected text or json)', 'unsupported value for --output-format: {other} (expected text, json, or ndjson)', 1)
+          old_error = '''                if output_format == CliOutputFormat::Json {
+                    println!(
+                        "{}",
+                        json!({
+                            "error": {
+                                "message": error.to_string(),
+                                "type": "runtime_error"
+                            }
+                        })
+                    );'''
+          new_error = '''                if matches!(output_format, CliOutputFormat::Json | CliOutputFormat::Ndjson) {
+                    if output_format == CliOutputFormat::Ndjson {
+                        println!("{}", json!({"type":"error","error":{"message":error.to_string(),"kind":"runtime_error"}}));
+                    } else {
+                        println!("{}", json!({"error":{"message":error.to_string(),"type":"runtime_error"}}));
+                    }'''
+          assert old_error in s
+          s = s.replace(old_error, new_error, 1)
+          old_match = '''            CliOutputFormat::Text => self.run_turn(input),
+            CliOutputFormat::Json => self.run_prompt_json(input),'''
+          new_match = '''            CliOutputFormat::Text => self.run_turn(input),
+            CliOutputFormat::Json => self.run_prompt_json(input),
+            CliOutputFormat::Ndjson => self.run_prompt_ndjson(input),'''
+          assert old_match in s
+          s = s.replace(old_match, new_match, 1)
+          anchor = '    fn run_prompt_json(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {'
+          assert anchor in s
+          method = r'''    fn run_prompt_ndjson(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let session = self.runtime.session().clone();
+        let mut runtime = build_runtime(
+            session,
+            self.model.clone(),
+            self.system_prompt.clone(),
+            true,
+            false,
+            self.allowed_tools.clone(),
+            self.permission_mode,
+            None,
+        )?;
+        let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
+        println!("{}", json!({"type":"message_start","model":self.model}));
+        let summary = runtime.run_turn(input, Some(&mut permission_prompter))?;
+        self.runtime = runtime;
+        self.persist_session()?;
+        println!("{}", json!({"type":"assistant","message":final_assistant_text(&summary),"model":self.model,"iterations":summary.iterations,"tool_uses":collect_tool_uses(&summary),"tool_results":collect_tool_results(&summary)}));
+        println!("{}", json!({"type":"result","model":self.model,"usage":{"input_tokens":summary.usage.input_tokens,"output_tokens":summary.usage.output_tokens,"cache_creation_input_tokens":summary.usage.cache_creation_input_tokens,"cache_read_input_tokens":summary.usage.cache_read_input_tokens}}));
+        Ok(())
+    }
+
+'''
+          s = s.replace(anchor, method + anchor, 1)
+          help_old = '        "  --output-format FORMAT                Non-interactive output: text or json",'
+          help_new = '        "  --output-format FORMAT                Non-interactive output: text, json, or ndjson",'
+          assert help_old in s
+          s = s.replace(help_old, help_new, 1)
+          test_anchor = '''    #[test]
+    fn parses_bare_prompt_and_json_output_flag() {'''
+          assert test_anchor in s
+          test = '''    #[test]
+    fn parses_ndjson_output_format() {
+        assert_eq!(CliOutputFormat::parse("ndjson"), Ok(CliOutputFormat::Ndjson));
+    }
+
+'''
+          s = s.replace(test_anchor, test + test_anchor, 1)
+          p.write_text(s)
+          PY
+          cd rust
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo test -p claw-cli --lib
+          cargo test -p commands --lib
+          cargo check --workspace
+          cd ..
+          git add rust/crates/claw-cli/src/main.rs
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'feat: add NDJSON CLI output contract'
+          git push origin HEAD:phase-9c-final
