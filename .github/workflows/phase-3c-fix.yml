@@ -1,0 +1,36 @@
+name: Phase 3C fix
+
+on:
+  push:
+    branches: [phase-3c-live-agent-dispatcher]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-3c-live-agent-dispatcher
+          fetch-depth: 0
+      - name: Patch terminal error handling
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path("rust/crates/tools/src/lib.rs")
+          s = p.read_text()
+          old = '''            if result.is_err() {\n                let _ = persist_agent_terminal_state(\n                    &job.manifest,\n                    &mut job.lifecycle,\n                    AgentStatus::Failed,\n                    None,\n                    Some(String::from("sub-agent thread panicked")),\n                );\n            }'''
+          new = '''            if result.is_err() || !job.lifecycle.is_terminal() {\n                let _ = persist_agent_terminal_state(\n                    &job.manifest,\n                    &mut job.lifecycle,\n                    AgentStatus::Failed,\n                    None,\n                    Some(if result.is_err() {\n                        String::from("sub-agent thread panicked")\n                    } else {\n                        String::from("sub-agent execution failed")\n                    }),\n                );\n            }'''
+          if old not in s:
+              raise SystemExit("expected terminal error handler not found")
+          p.write_text(s.replace(old, new, 1))
+      - name: Commit and remove temporary workflow
+        run: |
+          git rm .github/workflows/phase-3c-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust/crates/tools/src/lib.rs
+          git commit -m "fix: persist agent failure after runtime errors"
+          git push origin phase-3c-live-agent-dispatcher
