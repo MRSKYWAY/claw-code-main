@@ -1,0 +1,77 @@
+name: phase-9b-hooks-patch
+on:
+  push:
+    branches: [phase-9b-hook-management]
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply hook management patch
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+
+          commands = Path('rust/crates/commands/src/lib.rs')
+          source = commands.read_text()
+          source = source.replace(
+              'argument_hint: None,\n        resume_supported: true,\n        category: SlashCommandCategory::Workspace,',
+              'argument_hint: Some("[list|add <PreToolUse|PostToolUse> <command>|remove <PreToolUse|PostToolUse> <command>]"),\n        resume_supported: true,\n        category: SlashCommandCategory::Workspace,',
+              1,
+          )
+          source = source.replace(
+              '    Help,\n    Status,',
+              '    Help,\n    Hooks {\n        action: Option<String>,\n        event: Option<String>,\n        command: Option<String>,\n    },\n    Status,',
+              1,
+          )
+          old = '''            "help" => Self::Help,\n            "status" => Self::Status,'''
+          new = '''            "help" => Self::Help,\n            "hooks" => {\n                let action = parts.next().map(ToOwned::to_owned);\n                let event = parts.next().map(ToOwned::to_owned);\n                let command = {\n                    let remainder = parts.collect::<Vec<_>>().join(" ");\n                    (!remainder.is_empty()).then_some(remainder)\n                };\n                Self::Hooks { action, event, command }\n            }\n            "status" => Self::Status,'''
+          assert old in source
+          source = source.replace(old, new, 1)
+          source = source.replace(
+              'pub fn handle_agents_slash_command(args: Option<&str>, cwd: &Path) -> std::io::Result<String> {',
+              '''pub fn handle_hooks_slash_command(\n    action: Option<&str>,\n    event: Option<&str>,\n    command: Option<&str>,\n    cwd: &Path,\n) -> std::io::Result<String> {\n    let loader = runtime::ConfigLoader::default_for(cwd);\n    match normalize_optional_args(action) {\n        None | Some("list") => {\n            let config = loader.load().map_err(|error| io::Error::other(error.to_string()))?;\n            let pre = config.hooks().pre_tool_use();\n            let post = config.hooks().post_tool_use();\n            let mut lines = vec!["Hooks".to_string()];\n            lines.push(format!("  PreToolUse       {} configured", pre.len()));\n            for hook in pre { lines.push(format!("    {hook}")); }\n            lines.push(format!("  PostToolUse      {} configured", post.len()));\n            for hook in post { lines.push(format!("    {hook}")); }\n            Ok(lines.join("\\n"))\n        }\n        Some("add" | "remove") => {\n            let action = action.expect("action is present");\n            let event = normalize_hook_event(event)?;\n            let command = command.map(str::trim).filter(|value| !value.is_empty()).ok_or_else(|| {\n                io::Error::other(format!("Usage: /hooks {action} <PreToolUse|PostToolUse> <command>"))\n            })?;\n            let command = command.strip_prefix('"').and_then(|value| value.strip_suffix('"')).unwrap_or(command);\n            let path = cwd.join(".claw").join("settings.local.json");\n            fs::create_dir_all(path.parent().expect("settings path has parent"))?;\n            let mut root = if path.is_file() {\n                let text = fs::read_to_string(&path)?;\n                serde_json::from_str::<serde_json::Value>(&text).map_err(|error| io::Error::other(format!("invalid {}: {error}", path.display())))?\n            } else {\n                serde_json::json!({})\n            };\n            if !root.is_object() {\n                return Err(io::Error::other(format!("{} must contain a JSON object", path.display())));\n            }\n            let hooks = root.get_mut("hooks").and_then(serde_json::Value::as_object_mut);\n            if root.get("hooks").is_some() && hooks.is_none() {\n                return Err(io::Error::other(format!("{}: hooks must be an object", path.display())));\n            }\n            if root.get("hooks").is_none() {\n                root["hooks"] = serde_json::json!({});\n            }\n            let hooks = root.get_mut("hooks").and_then(serde_json::Value::as_object_mut).expect("hooks object");\n            let values = hooks.entry(event.to_string()).or_insert_with(|| serde_json::json!([]));\n            let array = values.as_array_mut().ok_or_else(|| io::Error::other(format!("{}: hooks.{event} must be an array", path.display())))?;\n            match action {\n                "add" => {\n                    if array.iter().any(|value| value.as_str() == Some(command)) {\n                        return Ok(format!("Hook already configured: {event} · {command}"));\n                    }\n                    array.push(serde_json::Value::String(command.to_string()));\n                    fs::write(&path, serde_json::to_string_pretty(&root).map_err(io::Error::other)? + "\\n")?;\n                    Ok(format!("Hook\\n  Result           added\\n  Event            {event}\\n  Command          {command}"))\n                }\n                "remove" => {\n                    let before = array.len();\n                    array.retain(|value| value.as_str() != Some(command));\n                    if before == array.len() {\n                        return Ok(format!("Hook not found: {event} · {command}"));\n                    }\n                    fs::write(&path, serde_json::to_string_pretty(&root).map_err(io::Error::other)? + "\\n")?;\n                    Ok(format!("Hook\\n  Result           removed\\n  Event            {event}\\n  Command          {command}"))\n                }\n                _ => unreachable!(),\n            }\n        }\n        Some(other) => Ok(format!("Unknown /hooks action '{other}'. Use list, add, or remove.")),\n    }\n}\n\nfn normalize_hook_event(event: Option<&str>) -> std::io::Result<&'static str> {\n    match event.map(str::trim).map(|value| value.to_ascii_lowercase()).as_deref() {\n        Some("pretooluse") | Some("pre") => Ok("PreToolUse"),\n        Some("posttooluse") | Some("post") => Ok("PostToolUse"),\n        _ => Err(io::Error::other("hook event must be PreToolUse or PostToolUse")),\n    }\n}\n\npub fn handle_agents_slash_command(args: Option<&str>, cwd: &Path) -> std::io::Result<String> {''',
+              1,
+          )
+          source = source.replace(
+              '        | SlashCommand::Status\n        | SlashCommand::Branch',
+              '        | SlashCommand::Hooks { .. }\n        | SlashCommand::Status\n        | SlashCommand::Branch',
+              1,
+          )
+          test_anchor = '''        assert_eq!(SlashCommand::parse("/help"), Some(SlashCommand::Help));\n        assert_eq!(SlashCommand::parse(" /status "), Some(SlashCommand::Status));'''
+          replacement = '''        assert_eq!(SlashCommand::parse("/help"), Some(SlashCommand::Help));\n        assert_eq!(\n            SlashCommand::parse("/hooks add pre echo hi"),\n            Some(SlashCommand::Hooks {\n                action: Some("add".to_string()),\n                event: Some("pre".to_string()),\n                command: Some("echo hi".to_string()),\n            })\n        );\n        assert_eq!(SlashCommand::parse(" /status "), Some(SlashCommand::Status));'''
+          assert test_anchor in source
+          source = source.replace(test_anchor, replacement, 1)
+          commands.write_text(source)
+
+          cli = Path('rust/crates/claw-cli/src/main.rs')
+          cli_source = cli.read_text()
+          cli_source = cli_source.replace(
+              '    handle_agents_slash_command, handle_plugins_slash_command, handle_skills_slash_command,',
+              '    handle_agents_slash_command, handle_hooks_slash_command, handle_plugins_slash_command, handle_skills_slash_command,',
+              1,
+          )
+          cli_source = cli_source.replace(
+              '            SlashCommand::Config { section } => {',
+              '''            SlashCommand::Hooks { action, event, command } => {\n                let cwd = env::current_dir()?;\n                let report = handle_hooks_slash_command(action.as_deref(), event.as_deref(), command.as_deref(), &cwd)?;\n                println!("{report}");\n                false\n            }\n            SlashCommand::Config { section } => {''',
+              1,
+          )
+          cli.write_text(cli_source)
+
+          # Refresh the parity note now that hook inspection + mutation are exposed.
+          parity = Path('PARITY.md')
+          if parity.exists():
+              text = parity.read_text()
+              text = text.replace('No Rust `/hooks` parity command.', 'Rust now exposes `/hooks` inspection and local hook mutation; broader hook ecosystems remain out of scope.')
+              parity.write_text(text)
+      - name: Commit and clean up
+        run: |
+          rm -f .github/workflows/phase-9b-hooks-patch.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add rust/crates/commands/src/lib.rs rust/crates/claw-cli/src/main.rs PARITY.md .github/workflows/phase-9b-hooks-patch.yml
+          git commit -m "feat: add hook management commands"
+          git push
