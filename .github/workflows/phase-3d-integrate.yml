@@ -1,0 +1,83 @@
+name: Phase 3D integration
+
+on:
+  push:
+    branches: [phase-3d-agent-result-api]
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-3d-agent-result-api
+          fetch-depth: 0
+      - name: Patch agent result endpoint
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path("rust/crates/server/src/lib.rs")
+          s = p.read_text()
+
+          s = s.replace(
+              '.route("/agents", get(list_agents))',
+              '.route("/agents", get(list_agents))\n        .route("/agents/{id}", get(get_agent))',
+              1,
+          )
+
+          old = '''pub struct ListAgentsResponse {
+    pub agents: Vec<AgentSummary>,
+}'''
+          new = '''pub struct ListAgentsResponse {
+    pub agents: Vec<AgentSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentDetailsResponse {
+    pub agent: AgentSummary,
+    pub output: String,
+}'''
+          if old not in s:
+              raise SystemExit("agent response block not found")
+          s = s.replace(old, new, 1)
+
+          marker = '''async fn list_agents() -> Json<ListAgentsResponse> {
+'''
+          handler = '''async fn get_agent(Path(id): Path<String>) -> ApiResult<Json<AgentDetailsResponse>> {
+    if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_') {
+        return Err(not_found(format!("agent `{id}` not found")));
+    }
+
+    for directory in agent_store_dirs() {
+        let manifest_path = directory.join(format!("{id}.json"));
+        let output_path = directory.join(format!("{id}.md"));
+        let manifest = match fs::read(&manifest_path) {
+            Ok(contents) => match serde_json::from_slice::<AgentSummary>(&contents) {
+                Ok(value) => value,
+                Err(_) => continue,
+            },
+            Err(_) => continue,
+        };
+        let output = fs::read_to_string(&output_path).unwrap_or_default();
+        return Ok(Json(AgentDetailsResponse { agent: manifest, output }));
+    }
+
+    Err(not_found(format!("agent `{id}` not found")))
+}
+
+'''
+          if marker not in s:
+              raise SystemExit("list_agents marker not found")
+          s = s.replace(marker, handler + marker, 1)
+          p.write_text(s)
+      - name: Commit and remove workflow
+        run: |
+          git rm .github/workflows/phase-3d-integrate.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust/crates/server/src/lib.rs
+          git commit -m "feat: add agent result retrieval endpoint"
+          git push origin phase-3d-agent-result-api
