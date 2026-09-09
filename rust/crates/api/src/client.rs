@@ -159,10 +159,7 @@ mod tests {
     fn resolves_gemini_and_nvidia_aliases() {
         assert_eq!(resolve_model_alias("gemini-flash"), "gemini-3.7-flash");
         assert_eq!(resolve_model_alias("gemini-pro"), "gemini-3.1-pro-preview");
-        assert_eq!(
-            resolve_model_alias("nvidia-fast"),
-            "deepseek-ai/deepseek-v4-flash-0731"
-        );
+        assert_eq!(resolve_model_alias("nvidia-fast"), "deepseek-ai/deepseek-v4-flash");
     }
 
     #[test]
