@@ -1,7 +1,7 @@
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
@@ -197,10 +197,27 @@ mod tests {
     }
 
     #[test]
-    fn atomic_write_keeps_existing_file_when_parent_is_unavailable() {
-        let parent = temp_path("missing-parent").join("nested");
-        let path = parent.join("agent.json");
-        let error = atomic_write(&path, "data").expect_err("invalid parent should fail");
-        assert!(error.kind() == std::io::ErrorKind::NotFound || error.kind() == std::io::ErrorKind::PermissionDenied);
+    fn atomic_write_cleans_up_after_failed_rename() {
+        let dir = temp_path("rename-failure");
+        fs::create_dir_all(&dir).expect("create directory");
+        let path = dir.join("agent.json");
+        fs::create_dir(&path).expect("create destination directory");
+
+        let error = atomic_write(&path, "data").expect_err("rename onto directory should fail");
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::AlreadyExists
+                | std::io::ErrorKind::PermissionDenied
+                | std::io::ErrorKind::InvalidInput
+        ));
+
+        let tmp_files = fs::read_dir(&dir)
+            .expect("read directory")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("tmp"))
+            .count();
+        assert_eq!(tmp_files, 0);
+        assert!(path.is_dir());
+        let _ = fs::remove_dir_all(dir);
     }
 }
