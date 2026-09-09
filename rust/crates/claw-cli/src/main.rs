@@ -97,8 +97,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             output_format,
             allowed_tools,
             permission_mode,
-        } => LiveCli::new(model, true, allowed_tools, permission_mode)?
-            .run_turn_with_output(&prompt, output_format)?,
+        } => {
+            let result = LiveCli::new(model, true, allowed_tools, permission_mode)
+                .and_then(|mut cli| cli.run_turn_with_output(&prompt, output_format));
+            if let Err(error) = result {
+                if output_format == CliOutputFormat::Json {
+                    println!("{}", json!({
+                        "error": {
+                            "message": error.to_string(),
+                            "type": "runtime_error"
+                        }
+                    }));
+                    std::process::exit(1);
+                }
+                return Err(error);
+            }
+        },
         CliAction::Login => run_login()?,
         CliAction::Logout => run_logout()?,
         CliAction::Init => run_init()?,
