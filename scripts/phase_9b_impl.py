@@ -19,7 +19,6 @@ test_new = '''        assert_eq!(\n            SlashCommand::parse("/hooks"),\n 
 assert test_old in text
 text = text.replace(test_old, test_new, 1)
 
-# Export hook implementation from the commands crate.
 if 'pub mod hooks;' not in text:
     text = text.replace(
         'use std::time::{SystemTime, UNIX_EPOCH};\n\n',
@@ -110,12 +109,12 @@ fn mutate_hook(
         if commands.iter().any(|value| value == command) {
             false
         } else {
-            commands.push(command.to_string());
+            commands.push(Value::String(command.to_string()));
             true
         }
     } else {
         let before = commands.len();
-        commands.retain(|value| value != command);
+        commands.retain(|value| value.as_str() != Some(command));
         before != commands.len()
     };
 
@@ -289,10 +288,3 @@ config_replacement = '''fn render_config_report(section: Option<&str>) -> Result
 assert config_anchor in text
 text = text.replace(config_anchor, config_replacement, 1)
 cli.write_text(text)
-PY
-python3 scripts/phase_9b_impl.py
-cd rust
-cargo fmt --all
-cargo fmt --all -- --check
-cargo test -p commands --lib
-cargo check -p claw-cli
