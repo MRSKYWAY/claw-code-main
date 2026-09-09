@@ -13,7 +13,7 @@ fn temp_path(suffix: &str) -> std::path::PathBuf {
 #[test]
 fn saves_session_atomically_and_removes_temp_file() {
     let path = temp_path("atomic");
-    let temp_path = path.with_extension("json.tmp");
+    let temp_prefix = format!(".{}.", path.file_name().unwrap().to_string_lossy());
 
     let mut session = Session::new();
     session
@@ -29,10 +29,11 @@ fn saves_session_atomically_and_removes_temp_file() {
 
     let restored = Session::load_from_path(&path).expect("session should load");
     assert_eq!(restored, session);
-    assert!(
-        !temp_path.exists(),
-        "atomic save must not leave its temporary file behind"
-    );
+    let temp_exists = fs::read_dir(path.parent().unwrap())
+        .expect("temp directory should be readable")
+        .filter_map(Result::ok)
+        .any(|entry| entry.file_name().to_string_lossy().starts_with(&temp_prefix));
+    assert!(!temp_exists, "atomic save must clean up its temporary file");
 
     fs::remove_file(path).expect("session file should be removable");
 }
