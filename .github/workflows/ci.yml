@@ -66,6 +66,16 @@ jobs:
           lib.write_text(text)
           PY
 
+          if [[ "${RUNNER_OS}" == "Linux" && -n "${GITHUB_HEAD_REF:-}" ]]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add rust/crates/plugins/src/hooks.rs rust/crates/plugins/src/lib.rs
+            if ! git diff --cached --quiet; then
+              git commit -m 'fix: close plugin stdin and avoid timeout pipe waits'
+              git push origin "HEAD:${GITHUB_HEAD_REF}"
+            fi
+          fi
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
