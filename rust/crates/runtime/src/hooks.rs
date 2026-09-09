@@ -1,9 +1,14 @@
 use std::ffi::OsStr;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 
 use crate::config::{RuntimeFeatureConfig, RuntimeHookConfig};
+
+const DEFAULT_HOOK_TIMEOUT: Duration = Duration::from_secs(10);
+const MIN_HOOK_TIMEOUT_MS: u64 = 100;
+const MAX_HOOK_TIMEOUT_MS: u64 = 60_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookEvent {
@@ -176,7 +181,7 @@ impl HookRunner {
             child.env("HOOK_TOOL_OUTPUT", tool_output);
         }
 
-        match child.output_with_stdin(request.payload.as_bytes()) {
+        match child.output_with_stdin_timeout(request.payload.as_bytes(), hook_timeout()) {
             Ok(output) => {
                 let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -203,7 +208,7 @@ impl HookRunner {
             }
             Err(error) => HookCommandOutcome::Warn {
                 message: format!(
-                    "{} hook `{command}` failed to start for `{}`: {error}",
+                    "{} hook `{command}` failed for `{}`: {error}",
                     request.event.as_str(),
                     request.tool_name
                 ),
@@ -233,6 +238,15 @@ fn format_hook_warning(command: &str, code: i32, stdout: Option<&str>, stderr: &
         message.push_str(stderr);
     }
     message
+}
+
+fn hook_timeout() -> Duration {
+    std::env::var("CLAW_HOOK_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(|value| value.clamp(MIN_HOOK_TIMEOUT_MS, MAX_HOOK_TIMEOUT_MS))
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_HOOK_TIMEOUT)
 }
 
 fn shell_command(command: &str) -> CommandWithStdin {
@@ -286,20 +300,40 @@ impl CommandWithStdin {
         self
     }
 
-    fn output_with_stdin(&mut self, stdin: &[u8]) -> std::io::Result<std::process::Output> {
+    fn output_with_stdin_timeout(
+        &mut self,
+        stdin: &[u8],
+        timeout: Duration,
+    ) -> std::io::Result<std::process::Output> {
         let mut child = self.command.spawn()?;
         if let Some(mut child_stdin) = child.stdin.take() {
             use std::io::Write;
             child_stdin.write_all(stdin)?;
         }
-        child.wait_with_output()
+
+        let started = Instant::now();
+        loop {
+            if child.try_wait()?.is_some() {
+                return child.wait_with_output();
+            }
+            if started.elapsed() >= timeout {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("timed out after {} ms", timeout.as_millis()),
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{HookRunResult, HookRunner};
+    use super::{hook_timeout, HookRunResult, HookRunner, MAX_HOOK_TIMEOUT_MS, MIN_HOOK_TIMEOUT_MS};
     use crate::config::{RuntimeFeatureConfig, RuntimeHookConfig};
+    use std::time::Duration;
 
     #[test]
     fn allows_exit_code_zero_and_captures_stdout() {
@@ -342,6 +376,35 @@ mod tests {
             .messages()
             .iter()
             .any(|message| message.contains("allowing tool execution to continue")));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn times_out_long_running_hooks() {
+        std::env::set_var("CLAW_HOOK_TIMEOUT_MS", "100");
+        let runner = HookRunner::new(RuntimeHookConfig::new(
+            vec![shell_snippet("sleep 1")],
+            Vec::new(),
+        ));
+
+        let result = runner.run_pre_tool_use("Read", r#"{"path":"README.md"}"#);
+        std::env::remove_var("CLAW_HOOK_TIMEOUT_MS");
+
+        assert!(!result.is_denied());
+        assert!(result
+            .messages()
+            .iter()
+            .any(|message| message.contains("timed out after 100 ms")));
+    }
+
+    #[test]
+    fn timeout_configuration_has_safe_bounds() {
+        std::env::set_var("CLAW_HOOK_TIMEOUT_MS", "1");
+        assert_eq!(hook_timeout(), Duration::from_millis(MIN_HOOK_TIMEOUT_MS));
+        std::env::set_var("CLAW_HOOK_TIMEOUT_MS", "999999");
+        assert_eq!(hook_timeout(), Duration::from_millis(MAX_HOOK_TIMEOUT_MS));
+        std::env::remove_var("CLAW_HOOK_TIMEOUT_MS");
+        assert_eq!(hook_timeout(), Duration::from_secs(10));
     }
 
     #[cfg(windows)]
