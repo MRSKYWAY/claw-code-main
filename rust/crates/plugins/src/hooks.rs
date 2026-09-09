@@ -1,10 +1,16 @@
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 
 use crate::{PluginError, PluginHooks, PluginRegistry};
+
+const DEFAULT_HOOK_TIMEOUT_MS: u64 = 10_000;
+const MIN_HOOK_TIMEOUT_MS: u64 = 100;
+const MAX_HOOK_TIMEOUT_MS: u64 = 60_000;
+const HOOK_TIMEOUT_ENV: &str = "CLAW_PLUGIN_HOOK_TIMEOUT_MS";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookEvent {
@@ -171,8 +177,9 @@ impl HookRunner {
             child.env("HOOK_TOOL_OUTPUT", tool_output);
         }
 
-        match child.output_with_stdin(payload.as_bytes()) {
-            Ok(output) => {
+        let timeout = hook_timeout();
+        match child.output_with_stdin_timeout(payload.as_bytes(), timeout) {
+            Ok(CommandOutput::Completed(output)) => {
                 let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 let message = (!stdout.is_empty()).then_some(stdout);
@@ -195,6 +202,23 @@ impl HookRunner {
                     },
                 }
             }
+            Ok(CommandOutput::TimedOut { output, timeout }) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let detail = if !stdout.is_empty() {
+                    stdout
+                } else if !stderr.is_empty() {
+                    stderr
+                } else {
+                    String::from("no output")
+                };
+                HookCommandOutcome::Warn {
+                    message: format!(
+                        "{} hook `{command}` timed out after {timeout} ms while handling `{tool_name}`; allowing tool execution to continue: {detail}",
+                        event.as_str()
+                    ),
+                }
+            }
             Err(error) => HookCommandOutcome::Warn {
                 message: format!(
                     "{} hook `{command}` failed to start for `{tool_name}`: {error}",
@@ -209,6 +233,23 @@ enum HookCommandOutcome {
     Allow { message: Option<String> },
     Deny { message: Option<String> },
     Warn { message: String },
+}
+
+enum CommandOutput {
+    Completed(std::process::Output),
+    TimedOut {
+        output: std::process::Output,
+        timeout: u64,
+    },
+}
+
+fn hook_timeout() -> u64 {
+    std::env::var(HOOK_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map_or(DEFAULT_HOOK_TIMEOUT_MS, |value| {
+            value.clamp(MIN_HOOK_TIMEOUT_MS, MAX_HOOK_TIMEOUT_MS)
+        })
 }
 
 fn parse_tool_input(tool_input: &str) -> serde_json::Value {
@@ -283,19 +324,37 @@ impl CommandWithStdin {
         self
     }
 
-    fn output_with_stdin(&mut self, stdin: &[u8]) -> std::io::Result<std::process::Output> {
+    fn output_with_stdin_timeout(
+        &mut self,
+        stdin: &[u8],
+        timeout: u64,
+    ) -> std::io::Result<CommandOutput> {
         let mut child = self.command.spawn()?;
         if let Some(mut child_stdin) = child.stdin.take() {
             use std::io::Write as _;
             child_stdin.write_all(stdin)?;
         }
-        child.wait_with_output()
+
+        let started = Instant::now();
+        loop {
+            if let Some(_status) = child.try_wait()? {
+                return child.wait_with_output().map(CommandOutput::Completed);
+            }
+
+            if started.elapsed() >= Duration::from_millis(timeout) {
+                let _ = child.kill();
+                let output = child.wait_with_output()?;
+                return Ok(CommandOutput::TimedOut { output, timeout });
+            }
+
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{HookRunResult, HookRunner};
+    use super::{HookRunResult, HookRunner, HOOK_TIMEOUT_ENV};
     use crate::{PluginManager, PluginManagerConfig};
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -391,5 +450,40 @@ mod tests {
 
         assert!(result.is_denied());
         assert_eq!(result.messages(), &["blocked by plugin".to_string()]);
+    }
+
+    #[test]
+    fn hook_timeout_warns_and_allows_tool_execution_to_continue() {
+        std::env::set_var(HOOK_TIMEOUT_ENV, "100");
+        let runner = HookRunner::new(crate::PluginHooks {
+            pre_tool_use: vec!["sleep 1".to_string()],
+            post_tool_use: Vec::new(),
+        });
+
+        let started = std::time::Instant::now();
+        let result = runner.run_pre_tool_use("Bash", r#"{"command":"pwd"}"#);
+        let elapsed = started.elapsed();
+        std::env::remove_var(HOOK_TIMEOUT_ENV);
+
+        assert!(!result.is_denied());
+        assert!(result.messages().iter().any(|message| {
+            message.contains("timed out after 100 ms") && message.contains("allowing tool execution")
+        }));
+        assert!(elapsed < std::time::Duration::from_millis(900));
+    }
+
+    #[test]
+    fn hook_timeout_configuration_is_clamped() {
+        std::env::set_var(HOOK_TIMEOUT_ENV, "1");
+        let runner = HookRunner::new(crate::PluginHooks {
+            pre_tool_use: vec!["printf 'fast'".to_string()],
+            post_tool_use: Vec::new(),
+        });
+        let result = runner.run_pre_tool_use("Read", r#"{"path":"README.md"}"#);
+        assert_eq!(result.messages(), &["fast".to_string()]);
+        std::env::set_var(HOOK_TIMEOUT_ENV, "999999");
+        let result = runner.run_pre_tool_use("Read", r#"{"path":"README.md"}"#);
+        std::env::remove_var(HOOK_TIMEOUT_ENV);
+        assert_eq!(result.messages(), &["fast".to_string()]);
     }
 }
