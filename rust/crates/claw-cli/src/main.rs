@@ -23,9 +23,9 @@ use api::{
 };
 
 use commands::{
-    handle_agents_slash_command, handle_plugins_slash_command, handle_skills_slash_command,
-    render_slash_command_help, resume_supported_slash_commands, slash_command_specs,
-    suggest_slash_commands, SlashCommand,
+    handle_agents_slash_command, handle_hooks_slash_command, handle_plugins_slash_command,
+    handle_skills_slash_command, render_slash_command_help, resume_supported_slash_commands,
+    slash_command_specs, suggest_slash_commands, SlashCommand,
 };
 use compat_harness::{extract_manifest, UpstreamPaths};
 use init::initialize_repo;
@@ -102,17 +102,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .and_then(|mut cli| cli.run_turn_with_output(&prompt, output_format));
             if let Err(error) = result {
                 if output_format == CliOutputFormat::Json {
-                    println!("{}", json!({
-                        "error": {
-                            "message": error.to_string(),
-                            "type": "runtime_error"
-                        }
-                    }));
+                    println!(
+                        "{}",
+                        json!({
+                            "error": {
+                                "message": error.to_string(),
+                                "type": "runtime_error"
+                            }
+                        })
+                    );
                     std::process::exit(1);
                 }
                 return Err(error);
             }
-        },
+        }
         CliAction::Login => run_login()?,
         CliAction::Logout => run_logout()?,
         CliAction::Init => run_init()?,
@@ -306,8 +309,9 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 .map_err(|error| format!("could not read prompt from stdin: {error}"))?;
             prompt
         } else {
-            fs::read_to_string(&path)
-                .map_err(|error| format!("could not read prompt file {}: {error}", path.display()))?
+            fs::read_to_string(&path).map_err(|error| {
+                format!("could not read prompt file {}: {error}", path.display())
+            })?
         };
         if prompt.trim().is_empty() {
             return Err("prompt file must not be empty".to_string());
@@ -2253,6 +2257,26 @@ Next
 }
 
 fn render_config_report(section: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
+    if let Some(section) = section {
+        if section == "hooks" || section.starts_with("hooks ") {
+            let cwd = env::current_dir()?;
+            let mut parts = section.split_whitespace();
+            parts.next();
+            let action = parts.next();
+            let event = parts.next();
+            let command = {
+                let remainder = parts.collect::<Vec<_>>().join(" ");
+                (!remainder.is_empty()).then_some(remainder)
+            };
+            return Ok(handle_hooks_slash_command(
+                action,
+                event,
+                command.as_deref(),
+                &cwd,
+            )?);
+        }
+    }
+
     let cwd = env::current_dir()?;
     let loader = ConfigLoader::default_for(&cwd);
     let discovered = loader.discover();
@@ -2717,11 +2741,15 @@ fn build_runtime_plugin_state(
     let loader = ConfigLoader::default_for(&cwd);
     let runtime_config = loader.load()?;
     let plugin_manager = build_plugin_manager(&cwd, &loader, &runtime_config);
-    let mut tool_registry = GlobalToolRegistry::with_plugin_tools(plugin_manager.aggregated_tools()?)?;
+    let mut tool_registry =
+        GlobalToolRegistry::with_plugin_tools(plugin_manager.aggregated_tools()?)?;
     if !runtime_config.mcp().servers().is_empty() {
         let mut manager = runtime::McpServerManager::from_runtime_config(&runtime_config);
         let mcp_tools = tokio::runtime::Runtime::new()?.block_on(manager.discover_tools())?;
-        let definitions = mcp_tools.into_iter().map(|managed| managed.tool).collect::<Vec<_>>();
+        let definitions = mcp_tools
+            .into_iter()
+            .map(|managed| managed.tool)
+            .collect::<Vec<_>>();
         tool_registry = tool_registry.with_mcp_tools(definitions, manager);
     }
     Ok((runtime_config.feature_config().clone(), tool_registry))
