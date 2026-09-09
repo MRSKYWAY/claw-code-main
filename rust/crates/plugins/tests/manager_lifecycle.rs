@@ -51,7 +51,9 @@ fn write_manifest(root: &Path, version: &str, description: &str) {
 
 fn manager_root() -> (TempDir, PluginManager) {
     let config_home = TempDir::new("claw-plugin-config");
-    let manager = PluginManager::new(PluginManagerConfig::new(config_home.path()));
+    let mut config = PluginManagerConfig::new(config_home.path());
+    config.bundled_root = Some(config_home.path().join("bundled").join("none"));
+    let manager = PluginManager::new(config);
     (config_home, manager)
 }
 
