@@ -5,7 +5,7 @@ use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -318,7 +318,26 @@ impl PluginTool {
             stdin.write_all(input_json.as_bytes())?;
         }
 
-        let output = child.wait_with_output()?;
+        let timeout = plugin_tool_timeout();
+        let started = Instant::now();
+        let output = loop {
+            if let Some(status) = child.try_wait()? {
+                let output = child.wait_with_output()?;
+                debug_assert_eq!(output.status, status);
+                break output;
+            }
+            if started.elapsed() >= timeout {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(PluginError::CommandFailed(format!(
+                    "plugin tool `{}` from `{}` timed out after {} ms",
+                    self.definition.name,
+                    self.plugin_id,
+                    timeout.as_millis()
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
         } else {
@@ -340,6 +359,15 @@ impl PluginTool {
 
 fn default_tool_permission_label() -> String {
     "danger-full-access".to_string()
+}
+
+fn plugin_tool_timeout() -> Duration {
+    std::env::var("CLAW_PLUGIN_TOOL_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|value| value.clamp(100, 60_000))
+        .map(Duration::from_millis)
+        .unwrap_or_else(|| Duration::from_secs(10))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
