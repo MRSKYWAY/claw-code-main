@@ -1,0 +1,99 @@
+=== manager_lifecycle ===
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded zmij v1.0.21
+  Downloaded itoa v1.0.18
+  Downloaded quote v1.0.45
+  Downloaded serde v1.0.228
+  Downloaded unicode-ident v1.0.24
+  Downloaded proc-macro2 v1.0.106
+  Downloaded serde_derive v1.0.228
+  Downloaded serde_core v1.0.228
+  Downloaded memchr v2.8.0
+  Downloaded serde_json v1.0.149
+  Downloaded syn v2.0.117
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling serde_core v1.0.228
+   Compiling zmij v1.0.21
+   Compiling serde v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.0
+   Compiling syn v2.0.117
+   Compiling serde_derive v1.0.228
+   Compiling plugins v0.1.0 (/home/runner/work/claw-code-main/claw-code-main/rust/crates/plugins)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.64s
+     Running tests/manager_lifecycle.rs (target/debug/deps/manager_lifecycle-01b5d59449118f00)
+
+running 2 tests
+test install_enable_disable_and_uninstall_are_persistent ... FAILED
+test update_refreshes_version_and_description_without_changing_identity ... FAILED
+
+failures:
+
+---- install_enable_disable_and_uninstall_are_persistent stdout ----
+
+thread 'install_enable_disable_and_uninstall_are_persistent' (2731) panicked at crates/plugins/tests/manager_lifecycle.rs:76:5:
+assertion `left == right` failed
+  left: 3
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- update_refreshes_version_and_description_without_changing_identity stdout ----
+
+thread 'update_refreshes_version_and_description_without_changing_identity' (2732) panicked at crates/plugins/tests/manager_lifecycle.rs:139:5:
+assertion `left == right` failed
+  left: 3
+ right: 1
+
+
+failures:
+    install_enable_disable_and_uninstall_are_persistent
+    update_refreshes_version_and_description_without_changing_identity
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p plugins --test manager_lifecycle`
+manager_status=101
+=== plugins lib ===
+   Compiling plugins v0.1.0 (/home/runner/work/claw-code-main/claw-code-main/rust/crates/plugins)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.76s
+     Running unittests src/lib.rs (target/debug/deps/plugins-8d373c162ddb0458)
+
+running 29 tests
+test hooks::tests::pre_tool_use_denies_when_plugin_hook_exits_two ... ok
+test hooks::tests::hook_timeout_configuration_is_clamped ... ok
+test tests::auto_installs_bundled_plugins_into_the_registry ... ok
+test tests::bundled_sync_prunes_removed_bundled_registry_entries ... ok
+test tests::aggregates_and_executes_plugin_tools ... ok
+test tests::discovers_builtin_and_bundled_plugins ... ok
+test tests::default_bundled_root_loads_repo_bundles_as_installed_plugins ... ok
+test tests::installed_plugin_discovery_prunes_stale_registry_entries ... ok
+test tests::installed_plugin_discovery_keeps_registry_entries_outside_install_root ... ok
+test tests::list_installed_plugins_scans_install_root_without_registry_entries ... ok
+test tests::list_installed_plugins_scans_packaged_manifests_in_install_root ... ok
+test tests::load_plugin_from_directory_accumulates_multiple_validation_errors ... ok
+test tests::load_plugin_from_directory_defaults_optional_fields ... ok
+test tests::load_plugin_from_directory_reads_root_manifest_and_validates_entries ... ok
+test tests::load_plugin_from_directory_rejects_duplicate_permissions_and_commands ... ok
+test tests::load_plugin_from_directory_rejects_invalid_permissions ... ok
+test tests::load_plugin_from_directory_rejects_invalid_tool_required_permission ... ok
+test tests::load_plugin_from_directory_rejects_missing_tool_or_command_paths ... ok
+test tests::load_plugin_from_directory_supports_packaged_manifest_path ... ok
+test tests::load_plugin_from_directory_validates_required_fields ... ok
+test tests::persists_bundled_plugin_disable_state_across_reloads ... ok
+test tests::installs_enables_updates_and_uninstalls_external_plugins ... ok
+test tests::persists_bundled_plugin_enable_state_across_reloads ... ok
+test tests::plugin_registry_tracks_enabled_state_and_lookup ... ok
+test tests::rejects_plugin_sources_with_missing_hook_paths ... ok
+test tests::validates_plugin_source_before_install ... ok
+test tests::plugin_registry_runs_initialize_and_shutdown_for_enabled_plugins ... ok
+test hooks::tests::collects_and_runs_hooks_from_enabled_plugins ... ok
+test hooks::tests::hook_timeout_warns_and_allows_tool_execution_to_continue ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+lib_status=0
+overall_status=1
