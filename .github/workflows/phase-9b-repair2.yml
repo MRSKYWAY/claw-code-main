@@ -1,0 +1,45 @@
+name: phase-9b-repair2
+on:
+  push:
+    branches: [phase-9b-hook-management]
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Repair exhaustive slash command match
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('rust/crates/commands/src/lib.rs')
+          text = path.read_text()
+          target = '''        | SlashCommand::Agents { .. }\n        | SlashCommand::Skills { .. }\n        | SlashCommand::Unknown(_) => None,\n'''
+          replacement = '''        | SlashCommand::Agents { .. }\n        | SlashCommand::Skills { .. }\n        | SlashCommand::Hooks { .. }\n        | SlashCommand::Unknown(_) => None,\n'''
+          if target not in text:
+              raise SystemExit('could not find exhaustive slash command match to repair')
+          path.write_text(text.replace(target, replacement, 1))
+          PY
+          cd rust
+          cargo fmt --all
+          cargo check -p commands
+          cargo test -p commands --lib
+      - name: Commit and remove patch workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd ..
+          rm -f .github/workflows/phase-9b-fix.yml .github/workflows/phase-9b-fix2.yml .github/workflows/phase-9b-repair.yml .github/workflows/phase-9b-repair2.yml
+          rm -f .github/phase-9b-fix-trigger.txt .github/phase-9b-fix2-trigger.txt .github/phase-9b-trigger.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m "fix: validate phase 9b hook management"
+          git push
