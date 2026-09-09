@@ -1,0 +1,14 @@
+{
+  "agentId": "agent-1788121968656482570",
+  "name": "ship-audit",
+  "description": "Review the branch",
+  "subagentType": "general-purpose",
+  "model": "nvidia-agent",
+  "status": "failed",
+  "outputFile": "/mnt/d/claw/claw-code-main/rust/.claw-agents/agent-1788121968656482570.md",
+  "manifestFile": "/mnt/d/claw/claw-code-main/rust/.claw-agents/agent-1788121968656482570.json",
+  "createdAt": "1788121968",
+  "startedAt": "1788121968",
+  "completedAt": "1788121968",
+  "error": "missing NVIDIA credentials; export NVIDIA_API_KEY before calling the NVIDIA API"
+}

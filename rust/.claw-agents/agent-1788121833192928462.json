@@ -1,0 +1,14 @@
+{
+  "agentId": "agent-1788121833192928462",
+  "name": "verify-the-branch",
+  "description": "Verify the branch",
+  "subagentType": "Explore",
+  "model": "nvidia-agent",
+  "status": "failed",
+  "outputFile": "/mnt/d/claw/claw-code-main/rust/.claw-agents/agent-1788121833192928462.md",
+  "manifestFile": "/mnt/d/claw/claw-code-main/rust/.claw-agents/agent-1788121833192928462.json",
+  "createdAt": "1788121833",
+  "startedAt": "1788121833",
+  "completedAt": "1788121833",
+  "error": "missing NVIDIA credentials; export NVIDIA_API_KEY before calling the NVIDIA API"
+}
