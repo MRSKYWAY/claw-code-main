@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use api::{
@@ -19,6 +19,10 @@ use runtime::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+mod agent_lifecycle;
+
+use crate::agent_lifecycle::{atomic_write, AgentCoordinator, AgentLifecycle, AgentStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolManifestEntry {
@@ -913,6 +917,7 @@ struct AgentJob {
     prompt: String,
     system_prompt: Vec<String>,
     allowed_tools: BTreeSet<String>,
+    lifecycle: AgentLifecycle,
 }
 
 #[derive(Debug, Serialize)]
@@ -1518,8 +1523,21 @@ fn resolve_skill_path(skill: &str) -> Result<std::path::PathBuf, String> {
 
 const DEFAULT_AGENT_MODEL: &str = "nvidia-agent";
 const DEFAULT_AGENT_SYSTEM_DATE: &str = "2026-03-31";
-const DEFAULT_MAX_PARALLEL_AGENTS: usize = 2;
-static ACTIVE_AGENT_COUNT: OnceLock<Mutex<usize>> = OnceLock::new();
+static AGENT_COORDINATOR: OnceLock<AgentCoordinator> = OnceLock::new();
+
+fn agent_coordinator() -> &'static AgentCoordinator {
+    AGENT_COORDINATOR.get_or_init(AgentCoordinator::configured_from_env)
+}
+
+fn persisted_agent_status(status: AgentStatus) -> &'static str {
+    match status {
+        AgentStatus::Queued => "queued",
+        AgentStatus::Running => "running",
+        AgentStatus::Succeeded => "completed",
+        AgentStatus::Failed => "failed",
+        AgentStatus::Cancelled => "cancelled",
+    }
+}
 
 fn execute_agent(input: AgentInput) -> Result<AgentOutput, String> {
     execute_agent_with_spawn(input, spawn_agent_job)
@@ -1568,7 +1586,7 @@ where
 ",
         agent_id, agent_name, input.description, normalized_subagent_type, created_at, input.prompt
     );
-    std::fs::write(&output_file, output_contents).map_err(|error| error.to_string())?;
+    atomic_write(&output_file, &output_contents).map_err(|error| error.to_string())?;
 
     let manifest = AgentOutput {
         agent_id,
@@ -1576,11 +1594,11 @@ where
         description: input.description,
         subagent_type: Some(normalized_subagent_type),
         model: Some(model),
-        status: String::from("running"),
+        status: String::from("queued"),
         output_file: output_file.display().to_string(),
         manifest_file: manifest_file.display().to_string(),
         created_at: created_at.clone(),
-        started_at: Some(created_at),
+        started_at: None,
         completed_at: None,
         error: None,
     };
@@ -1592,88 +1610,93 @@ where
         prompt: input.prompt,
         system_prompt,
         allowed_tools,
+        lifecycle: AgentLifecycle::new(),
     };
     if let Err(error) = spawn_fn(job) {
         let error = format!("failed to spawn sub-agent: {error}");
-        persist_agent_terminal_state(&manifest, "failed", None, Some(error.clone()))?;
+        let mut lifecycle = AgentLifecycle::new();
+        persist_agent_terminal_state(
+            &manifest,
+            &mut lifecycle,
+            AgentStatus::Failed,
+            None,
+            Some(error.clone()),
+        )?;
         return Err(error);
     }
 
     Ok(manifest)
 }
 
-fn spawn_agent_job(job: AgentJob) -> Result<(), String> {
-    reserve_agent_slot()?;
+fn spawn_agent_job(mut job: AgentJob) -> Result<(), String> {
+    let permit = agent_coordinator().try_acquire()?;
     let thread_name = format!("claw-agent-{}", job.manifest.agent_id);
     std::thread::Builder::new()
         .name(thread_name)
         .spawn(move || {
-            let result =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_agent_job(&job)));
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    let _ =
-                        persist_agent_terminal_state(&job.manifest, "failed", None, Some(error));
-                }
-                Err(_) => {
-                    let _ = persist_agent_terminal_state(
-                        &job.manifest,
-                        "failed",
-                        None,
-                        Some(String::from("sub-agent thread panicked")),
-                    );
-                }
+            let _permit = permit;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_agent_job(&mut job)
+            }));
+            if result.is_err() {
+                let _ = persist_agent_terminal_state(
+                    &job.manifest,
+                    &mut job.lifecycle,
+                    AgentStatus::Failed,
+                    None,
+                    Some(String::from("sub-agent thread panicked")),
+                );
             }
-            release_agent_slot();
         })
         .map(|_| ())
-        .map_err(|error| {
-            release_agent_slot();
-            error.to_string()
-        })
+        .map_err(|error| error.to_string())
 }
 
-fn reserve_agent_slot() -> Result<(), String> {
-    let active = ACTIVE_AGENT_COUNT.get_or_init(|| Mutex::new(0));
-    let mut active = active
-        .lock()
-        .map_err(|_| "agent coordinator lock poisoned")?;
-    let limit = std::env::var("CLAW_MAX_PARALLEL_AGENTS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| (1..=8).contains(value))
-        .unwrap_or(DEFAULT_MAX_PARALLEL_AGENTS);
-    if *active >= limit {
-        return Err(format!(
-            "agent coordinator is at capacity ({limit}); wait for an active agent"
-        ));
-    }
-    *active += 1;
-    Ok(())
-}
+fn run_agent_job(job: &mut AgentJob) -> Result<(), String> {
+    job.lifecycle
+        .transition(AgentStatus::Running)
+        .map_err(|error| error.to_string())?;
+    let mut running_manifest = job.manifest.clone();
+    running_manifest.status = persisted_agent_status(AgentStatus::Running).to_string();
+    running_manifest.started_at = Some(iso8601_now());
+    write_agent_manifest(&running_manifest)?;
+    job.manifest = running_manifest;
 
-fn release_agent_slot() {
-    if let Some(active) = ACTIVE_AGENT_COUNT.get() {
-        if let Ok(mut active) = active.lock() {
-            *active = active.saturating_sub(1);
-        }
-    }
-}
-
-fn run_agent_job(job: &AgentJob) -> Result<(), String> {
     let subagent_type = job
         .manifest
         .subagent_type
         .as_deref()
         .unwrap_or("general-purpose");
-    let mut runtime =
-        build_agent_runtime(job)?.with_max_iterations(max_iterations_for_subagent(subagent_type));
-    let summary = runtime
-        .run_turn(job.prompt.clone(), None)
-        .map_err(|error| error.to_string())?;
-    let final_text = final_assistant_text(&summary);
-    persist_agent_terminal_state(&job.manifest, "completed", Some(final_text.as_str()), None)
+    let result = (|| {
+        let mut runtime = build_agent_runtime(job)?
+            .with_max_iterations(max_iterations_for_subagent(subagent_type));
+        let summary = runtime
+            .run_turn(job.prompt.clone(), None)
+            .map_err(|error| error.to_string())?;
+        Ok(final_assistant_text(&summary))
+    })();
+
+    match result {
+        Ok(final_text) => {
+            persist_agent_terminal_state(
+                &job.manifest,
+                &mut job.lifecycle,
+                AgentStatus::Succeeded,
+                Some(final_text.as_str()),
+                None,
+            )
+        }
+        Err(error) => {
+            persist_agent_terminal_state(
+                &job.manifest,
+                &mut job.lifecycle,
+                AgentStatus::Failed,
+                None,
+                Some(error.clone()),
+            )?;
+            Err(error)
+        }
+    }
 }
 
 fn build_agent_runtime(
@@ -1859,25 +1882,28 @@ fn agent_permission_policy() -> PermissionPolicy {
 }
 
 fn write_agent_manifest(manifest: &AgentOutput) -> Result<(), String> {
-    std::fs::write(
-        &manifest.manifest_file,
-        serde_json::to_string_pretty(manifest).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())
+    let contents = serde_json::to_string_pretty(manifest).map_err(|error| error.to_string())?;
+    atomic_write(Path::new(&manifest.manifest_file), &contents)
+        .map_err(|error| error.to_string())
 }
 
 fn persist_agent_terminal_state(
     manifest: &AgentOutput,
-    status: &str,
+    lifecycle: &mut AgentLifecycle,
+    status: AgentStatus,
     result: Option<&str>,
     error: Option<String>,
 ) -> Result<(), String> {
+    lifecycle
+        .transition(status)
+        .map_err(|transition| transition.to_string())?;
+    let persisted_status = persisted_agent_status(status);
     append_agent_output(
         &manifest.output_file,
-        &format_agent_terminal_output(status, result, error.as_deref()),
+        &format_agent_terminal_output(persisted_status, result, error.as_deref()),
     )?;
     let mut next_manifest = manifest.clone();
-    next_manifest.status = status.to_string();
+    next_manifest.status = persisted_status.to_string();
     next_manifest.completed_at = Some(iso8601_now());
     next_manifest.error = error;
     write_agent_manifest(&next_manifest)
