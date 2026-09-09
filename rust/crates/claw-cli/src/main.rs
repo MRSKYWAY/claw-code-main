@@ -4487,7 +4487,7 @@ mod tests {
         assert_eq!(resolve_model_alias("gemini-pro"), "gemini-3.1-pro-preview");
         assert_eq!(
             resolve_model_alias("nvidia-fast"),
-            "deepseek-ai/deepseek-v4-flash-0731"
+            "deepseek-ai/deepseek-v4-flash"
         );
         assert_eq!(resolve_model_alias("custom-model"), "custom-model");
     }
@@ -4750,7 +4750,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "help", "status", "compact", "clear", "cost", "config", "memory", "init", "diff",
+                "help", "status", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",
                 "version", "export", "agents", "skills",
             ]
         );
