@@ -1,0 +1,68 @@
+name: phase-9a-hooks-patch
+
+on:
+  push:
+    paths:
+      - .github/phase-9a-hooks-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply hooks command patch
+        env:
+          TARGET: rust/crates/commands/src/lib.rs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("rust/crates/commands/src/lib.rs")
+          text = path.read_text()
+
+          status_spec = '''    SlashCommandSpec {\n        name: "status",\n        aliases: &[],\n        summary: "Show current session status",\n        argument_hint: None,\n        resume_supported: true,\n        category: SlashCommandCategory::Core,\n    },\n'''
+          hooks_spec = status_spec + '''    SlashCommandSpec {\n        name: "hooks",\n        aliases: &[],\n        summary: "Inspect configured PreToolUse and PostToolUse hooks",\n        argument_hint: None,\n        resume_supported: true,\n        category: SlashCommandCategory::Workspace,\n    },\n'''
+          if text.count(status_spec) != 1:
+              raise SystemExit("status spec anchor not found exactly once")
+          text = text.replace(status_spec, hooks_spec)
+
+          parser_anchor = '            "status" => Self::Status,\n'
+          parser_replacement = parser_anchor + '            "hooks" => Self::Config {\n                section: Some("hooks".to_string()),\n            },\n'
+          if text.count(parser_anchor) != 1:
+              raise SystemExit("parser anchor not found exactly once")
+          text = text.replace(parser_anchor, parser_replacement)
+
+          parse_test_anchor = '        assert_eq!(SlashCommand::parse(" /status "), Some(SlashCommand::Status));\n'
+          parse_test_replacement = parse_test_anchor + '        assert_eq!(\n            SlashCommand::parse("/hooks"),\n            Some(SlashCommand::Config {\n                section: Some("hooks".to_string())\n            })\n        );\n'
+          if text.count(parse_test_anchor) != 1:
+              raise SystemExit("parse test anchor not found exactly once")
+          text = text.replace(parse_test_anchor, parse_test_replacement)
+
+          help_anchor = '        assert!(help.contains("/status"));\n'
+          help_replacement = help_anchor + '        assert!(help.contains("/hooks"));\n'
+          if text.count(help_anchor) != 1:
+              raise SystemExit("help test anchor not found exactly once")
+          text = text.replace(help_anchor, help_replacement)
+
+          len_anchor = '        assert_eq!(slash_command_specs().len(), 28);\n        assert_eq!(resume_supported_slash_commands().len(), 13);\n'
+          len_replacement = '        assert_eq!(slash_command_specs().len(), 29);\n        assert_eq!(resume_supported_slash_commands().len(), 14);\n'
+          if text.count(len_anchor) != 1:
+              raise SystemExit("spec count anchor not found exactly once")
+          text = text.replace(len_anchor, len_replacement)
+
+          path.write_text(text)
+          PY
+
+      - name: Commit and clean up
+        run: |
+          rm -f .github/phase-9a-hooks-trigger .github/workflows/phase-9a-hooks-patch.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust/crates/commands/src/lib.rs .github/phase-9a-hooks-trigger .github/workflows/phase-9a-hooks-patch.yml
+          git commit -m "feat: expose hooks inspection slash command"
+          git push
