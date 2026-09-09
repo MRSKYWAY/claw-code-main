@@ -42,11 +42,20 @@ pub struct ProviderMetadata {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelCapabilities {
+    pub max_output_tokens: u32,
+    pub supports_tools: bool,
+    pub supports_streaming: bool,
+    pub supports_reasoning: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelCatalogEntry {
     pub alias: &'static str,
     pub model: &'static str,
     pub label: &'static str,
     pub metadata: ProviderMetadata,
+    pub capabilities: ModelCapabilities,
 }
 
 const GEMINI: ProviderMetadata = ProviderMetadata {
@@ -68,36 +77,42 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         model: "gemini-3.7-flash",
         label: "Gemini · Flash",
         metadata: GEMINI,
+        capabilities: ModelCapabilities { max_output_tokens: 65_536, supports_tools: true, supports_streaming: true, supports_reasoning: true },
     },
     ModelCatalogEntry {
         alias: "gemini-pro",
         model: "gemini-3.1-pro-preview",
         label: "Gemini · Pro",
         metadata: GEMINI,
+        capabilities: ModelCapabilities { max_output_tokens: 65_536, supports_tools: true, supports_streaming: true, supports_reasoning: true },
     },
     ModelCatalogEntry {
         alias: "nvidia-fast",
-        model: "deepseek-ai/deepseek-v4-flash-0731",
+        model: "deepseek-ai/deepseek-v4-flash",
         label: "NVIDIA · Fast",
         metadata: NVIDIA,
+        capabilities: ModelCapabilities { max_output_tokens: 16_384, supports_tools: true, supports_streaming: true, supports_reasoning: true },
     },
     ModelCatalogEntry {
         alias: "nvidia-plan",
         model: "nvidia/nemotron-3-super-120b-a12b",
         label: "NVIDIA · Planner",
         metadata: NVIDIA,
+        capabilities: ModelCapabilities { max_output_tokens: 32_768, supports_tools: true, supports_streaming: true, supports_reasoning: true },
     },
     ModelCatalogEntry {
         alias: "nvidia-agent",
         model: "z-ai/glm-5.2",
         label: "NVIDIA · Agent",
         metadata: NVIDIA,
+        capabilities: ModelCapabilities { max_output_tokens: 32_768, supports_tools: true, supports_streaming: true, supports_reasoning: true },
     },
     ModelCatalogEntry {
         alias: "nvidia-long",
         model: "deepseek-ai/deepseek-v4-pro",
         label: "NVIDIA · Long context",
         metadata: NVIDIA,
+        capabilities: ModelCapabilities { max_output_tokens: 16_384, supports_tools: true, supports_streaming: true, supports_reasoning: true },
     },
 ];
 
@@ -116,7 +131,7 @@ pub fn resolve_model_alias(model: &str) -> String {
 pub fn metadata_for_model(model: &str) -> Option<ProviderMetadata> {
     let canonical = resolve_model_alias(model);
     let lower = canonical.to_ascii_lowercase();
-    if let Some(entry) = MODEL_CATALOG.iter().find(|entry| entry.alias == lower) {
+    if let Some(entry) = MODEL_CATALOG.iter().find(|entry| entry.model.eq_ignore_ascii_case(&canonical)) {
         return Some(entry.metadata);
     }
     if lower.starts_with("grok") {
@@ -146,16 +161,30 @@ pub fn metadata_for_model(model: &str) -> Option<ProviderMetadata> {
     None
 }
 
+#[must_use]
+pub fn capabilities_for_model(model: &str) -> ModelCapabilities {
+    let canonical = resolve_model_alias(model);
+    MODEL_CATALOG
+        .iter()
+        .find(|entry| entry.model.eq_ignore_ascii_case(&canonical) || entry.alias.eq_ignore_ascii_case(model.trim()))
+        .map(|entry| entry.capabilities)
+        .unwrap_or(ModelCapabilities {
+            max_output_tokens: 64_000,
+            supports_tools: true,
+            supports_streaming: true,
+            supports_reasoning: false,
+        })
+}
+
+#[must_use]
+pub fn max_tokens_for_model(model: &str) -> u32 {
+    capabilities_for_model(model).max_output_tokens
+}
+
 fn is_nvidia_model(model: &str) -> bool {
-    [
-        "deepseek-ai/",
-        "z-ai/",
-        "nvidia/",
-        "stepfun-ai/",
-        "minimaxai/",
-    ]
-    .iter()
-    .any(|prefix| model.starts_with(prefix))
+    ["deepseek-ai/", "z-ai/", "nvidia/", "stepfun-ai/", "minimaxai/"]
+        .iter()
+        .any(|prefix| model.starts_with(prefix))
 }
 
 #[must_use]
@@ -175,28 +204,15 @@ pub fn detect_provider_kind(model: &str) -> ProviderKind {
     ProviderKind::ClawApi
 }
 
-#[must_use]
-pub fn max_tokens_for_model(model: &str) -> u32 {
-    let canonical = resolve_model_alias(model);
-    if canonical.contains("opus") {
-        32_000
-    } else {
-        64_000
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{detect_provider_kind, max_tokens_for_model, resolve_model_alias, ProviderKind};
+    use super::{capabilities_for_model, detect_provider_kind, max_tokens_for_model, resolve_model_alias, ProviderKind};
 
     #[test]
     fn resolves_gemini_and_nvidia_aliases() {
         assert_eq!(resolve_model_alias("gemini-flash"), "gemini-3.7-flash");
         assert_eq!(resolve_model_alias("gemini-pro"), "gemini-3.1-pro-preview");
-        assert_eq!(
-            resolve_model_alias("nvidia-fast"),
-            "deepseek-ai/deepseek-v4-flash-0731"
-        );
+        assert_eq!(resolve_model_alias("nvidia-fast"), "deepseek-ai/deepseek-v4-flash");
         assert_eq!(resolve_model_alias("nvidia-agent"), "z-ai/glm-5.2");
     }
 
@@ -204,15 +220,22 @@ mod tests {
     fn detects_provider_from_model_name_first() {
         assert_eq!(detect_provider_kind("gemini-flash"), ProviderKind::Gemini);
         assert_eq!(detect_provider_kind("nvidia-fast"), ProviderKind::Nvidia);
-        assert_eq!(
-            detect_provider_kind("deepseek-ai/deepseek-v4-pro"),
-            ProviderKind::Nvidia
-        );
+        assert_eq!(detect_provider_kind("deepseek-ai/deepseek-v4-pro"), ProviderKind::Nvidia);
         assert_eq!(detect_provider_kind("z-ai/glm-5.2"), ProviderKind::Nvidia);
     }
 
     #[test]
-    fn keeps_existing_max_token_heuristic() {
-        assert_eq!(max_tokens_for_model("nvidia-agent"), 64_000);
+    fn uses_model_specific_output_limits() {
+        assert_eq!(max_tokens_for_model("gemini-flash"), 65_536);
+        assert_eq!(max_tokens_for_model("nvidia-fast"), 16_384);
+        assert_eq!(max_tokens_for_model("nvidia-plan"), 32_768);
+        assert_eq!(max_tokens_for_model("nvidia-agent"), 32_768);
+        assert_eq!(max_tokens_for_model("nvidia-long"), 16_384);
+    }
+
+    #[test]
+    fn unknown_models_keep_safe_defaults() {
+        let caps = capabilities_for_model("some-custom-model");
+        assert_eq!(caps.max_output_tokens, 64_000);
     }
 }
