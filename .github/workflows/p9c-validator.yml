@@ -1,0 +1,18 @@
+name: p9c-validator
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate
+        run: |
+          cd rust
+          cargo fmt --all -- --check
+          cargo test -p claw-cli --lib
+          cargo test -p commands --lib
+          cargo check --workspace
