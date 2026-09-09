@@ -1,0 +1,10 @@
+name: p9b-smoke
+on:
+  push:
+    branches:
+      - phase-9b-reimplementation
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo smoke
