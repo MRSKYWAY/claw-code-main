@@ -1,0 +1,67 @@
+name: phase-9b-finalize
+on:
+  push:
+    branches: [phase-9b-hook-management]
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply final Phase 9B fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          commands = Path('rust/crates/commands/src/lib.rs')
+          text = commands.read_text()
+
+          text, duplicate_count = re.subn(
+              r'\n\s*"hooks"\s*=>\s*Self::Config\s*\{\s*section:\s*Some\("hooks"\.to_string\(\)\),\s*\},',
+              '', text, count=1
+          )
+          if duplicate_count != 1:
+              raise SystemExit(f'duplicate hooks parser arm removal count={duplicate_count}')
+
+          old_borrow = re.compile(
+              r'\s*let hooks = root\.get_mut\("hooks"\).*?'
+              r'\s*let hooks = root\.get_mut\("hooks"\).*?expect\("hooks object"\);',
+              re.S,
+          )
+          new_borrow = '''\n            if let Some(value) = root.get("hooks") {\n                if !value.is_object() {\n                    return Err(io::Error::other(format!("{}: hooks must be an object", path.display())));\n                }\n            } else {\n                root["hooks"] = serde_json::json!({});\n            }\n            let hooks = root\n                .get_mut("hooks")\n                .and_then(serde_json::Value::as_object_mut)\n                .expect("hooks object");'''
+          text, borrow_count = old_borrow.subn(new_borrow, text, count=1)
+          if borrow_count != 1:
+              raise SystemExit(f'borrow block replacement count={borrow_count}')
+
+          commands.write_text(text)
+
+          cli = Path('rust/crates/claw-cli/src/main.rs')
+          text = cli.read_text()
+          target = '''        | SlashCommand::Agents { .. }\n        | SlashCommand::Skills { .. }\n        | SlashCommand::Unknown(_) => Err("unsupported resumed slash command".into()),\n'''
+          replacement = '''        | SlashCommand::Agents { .. }\n        | SlashCommand::Skills { .. }\n        | SlashCommand::Hooks { .. }\n        | SlashCommand::Unknown(_) => Err("unsupported resumed slash command".into()),\n'''
+          if target not in text:
+              raise SystemExit('resume dispatcher target not found')
+          cli.write_text(text.replace(target, replacement, 1))
+          PY
+
+          cd rust
+          cargo fmt --all
+          cargo check -p commands
+          cargo test -p commands --lib
+          cargo check -p claw-cli
+      - name: Commit clean final branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd ..
+          rm -f .github/workflows/phase-9b-fix.yml .github/workflows/phase-9b-fix2.yml .github/workflows/phase-9b-repair.yml .github/workflows/phase-9b-repair2.yml .github/workflows/phase-9b-repair3.yml .github/workflows/phase-9b-repair4.yml .github/workflows/phase-9b-repair5.yml .github/workflows/phase-9b-repair6.yml .github/workflows/phase-9b-repair7.yml .github/workflows/phase-9b-finalize.yml
+          rm -f .github/phase-9b-fix-trigger.txt .github/phase-9b-fix2-trigger.txt .github/phase-9b-trigger.txt
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "fix: finalize phase 9b hook management"
+          git push
