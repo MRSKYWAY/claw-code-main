@@ -46,7 +46,7 @@ jobs:
         working-directory: rust
         run: |
           cargo test -p plugins --test manager_lifecycle
-          cargo test -p plugins --lib hooks::tests::collects_and_runs_hooks_from_enabled_plugins hooks::tests::hook_timeout_warns_and_allows_tool_execution_to_continue tests::aggregates_and_executes_plugin_tools
+          cargo test -p plugins --lib
       - name: Commit and remove fixer
         shell: bash
         run: |
