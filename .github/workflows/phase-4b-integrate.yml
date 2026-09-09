@@ -16,8 +16,9 @@ jobs:
           ref: phase-4b-stdin-cli
           fetch-depth: 0
       - name: Patch stdin prompt source
-        shell: python
+        shell: bash
         run: |
+          python3 <<'PY'
           from pathlib import Path
           p = Path("rust/crates/claw-cli/src/main.rs")
           s = p.read_text()
@@ -37,11 +38,6 @@ jobs:
           if old not in s:
               raise SystemExit("prompt-file read block not found")
           s = s.replace(old, new, 1)
-
-          old_help = '''            "--prompt-file" => {'''
-          new_help = '''            "--prompt-file" => {'''
-          if old_help not in s:
-              raise SystemExit("prompt-file parser marker not found")
 
           marker = '''fn join_optional_args(args: &[String]) -> Option<String> {'''
           tests = r'''
@@ -73,6 +69,7 @@ mod stdin_prompt_tests {
               s = s.replace(marker, tests + marker, 1)
 
           p.write_text(s)
+          PY
       - name: Verify formatting and tests
         working-directory: rust
         run: |
