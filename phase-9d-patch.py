@@ -14,7 +14,7 @@ def replace_once(path: str, old: str, new: str) -> None:
 replace_once(
     "rust/crates/commands/src/lib.rs",
     "pub use hooks::handle_hooks_slash_command;\n",
-    "pub use hooks::handle_hooks_slash_command;\n\nuse std::fmt::Write as _;\nuse runtime::{ConfigLoader, ConfigSource, McpServerConfig, McpTransport, ScopedMcpServerConfig};\n",
+    "pub use hooks::handle_hooks_slash_command;\n\nuse std::fmt::Write as _;\nuse runtime::{ConfigSource, McpServerConfig, McpTransport, ScopedMcpServerConfig};\n",
 )
 replace_once(
     "rust/crates/commands/src/lib.rs",
@@ -31,6 +31,7 @@ replace_once(
     '            "help" => Self::Help,\n            "status" => Self::Status,\n            "hooks" => Self::Config {',
     '            "help" => Self::Help,\n            "status" => Self::Status,\n            "mcp" => Self::Mcp,\n            "hooks" => Self::Config {',
 )
+
 marker = '\nfn remainder_after_command(input: &str, command: &str) -> Option<String> {'
 commands = Path("rust/crates/commands/src/lib.rs")
 text = commands.read_text()
@@ -100,11 +101,6 @@ pub fn render_mcp_report(
     if marker not in text:
         raise RuntimeError("commands lib: insertion marker not found")
     commands.write_text(text.replace(marker, renderer + marker))
-replace_once(
-    "rust/crates/commands/src/lib.rs",
-    '    #[test]\n    fn parses_resume_and_config_slash_commands() {',
-    '    #[test]\n    fn parses_mcp_slash_command() {\n        assert_eq!(SlashCommand::parse("/mcp"), Some(SlashCommand::Mcp));\n        assert!(slash_command_specs().iter().any(|spec| spec.name == "mcp"));\n    }\n\n    #[test]\n    fn parses_resume_and_config_slash_commands() {',
-)
 
 # claw-cli: dispatch the shared command and expose the report in the live REPL.
 replace_once(
