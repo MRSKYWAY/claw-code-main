@@ -6,32 +6,23 @@ permissions:
   contents: write
 jobs:
   fix:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: phase-10d-task-inspection
           fetch-depth: 0
-      - name: Patch tests and renderer
+      - name: Patch phase 10D
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('rust/crates/commands/src/lib.rs')
-          s = p.read_text()
-          old = 'assert_eq!(slash_command_specs().len(), 30);'
-          assert old in s, 'help count target not found'
-          s = s.replace(old, 'assert_eq!(slash_command_specs().len(), 31);', 1)
-          old_fn = '''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
-    let parent = snapshot.parent_id.as_deref().unwrap_or("-");
-    format!(
-        "  {:<24} {:<11} parent={parent}\\n    {}",
-        snapshot.id,
-        format_task_state(snapshot.state),
-        snapshot.description,
-    )
-}'''
-          new_fn = '''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
+          p=Path('rust/crates/commands/src/lib.rs')
+          s=p.read_text()
+          assert 'assert_eq!(slash_command_specs().len(), 30);' in s
+          s=s.replace('assert_eq!(slash_command_specs().len(), 30);','assert_eq!(slash_command_specs().len(), 31);',1)
+          start=s.index('fn render_task_row(')
+          end=s.index('\nfn render_task_snapshot(',start)
+          new='''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
     let parent = snapshot.parent_id.as_deref().unwrap_or("-");
     let result = snapshot
         .result
@@ -48,22 +39,12 @@ jobs:
         snapshot.description,
     )
 }'''
-          assert old_fn in s, 'render_task_row target not found'
-          s = s.replace(old_fn, new_fn, 1)
+          s=s[:start]+new+s[end:]
           p.write_text(s)
           PY
-      - name: Verify targeted tests
-        run: cargo test -p claw-commands tasks_command_parses_and_renders_registry_state renders_help_from_shared_specs
-      - name: Commit fix
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          cargo test -p claw-commands tasks_command_parses_and_renders_registry_state renders_help_from_shared_specs
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add rust/crates/commands/src/lib.rs
-          git commit -m 'fix: update phase 10d task inspection tests' || exit 0
-          git push origin HEAD:phase-10d-task-inspection
-      - name: Remove temporary workflow
-        if: success()
-        run: |
-          git rm .github/workflows/phase-10d-fix5.yml
-          git commit -m 'chore: remove temporary phase 10d fix workflow'
+          git commit -m 'fix: complete phase 10d task inspection' || true
           git push origin HEAD:phase-10d-task-inspection
