@@ -4,9 +4,14 @@ use axum::Json;
 use runtime::{ContentBlock, ConversationMessage, MessageRole, Session as RuntimeSession};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::mpsc::{self, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::broadcast;
 
 use crate::{RunActivity, RunRecord};
 
@@ -59,8 +64,14 @@ pub async fn run_prompt(
     let model = model.to_string();
     let command_prompt = prompt.clone();
     let command_model = model.clone();
+    let command_broadcaster = broadcaster.clone();
     let result = tokio::task::spawn_blocking(move || {
-        execute_claw(&command_model, &command_prompt, &conversation)
+        execute_claw(
+            &command_model,
+            &command_prompt,
+            &conversation,
+            &command_broadcaster,
+        )
     })
     .await
     .map_err(|error| internal_error(format!("prompt task failed: {error}")))??;
@@ -104,26 +115,38 @@ struct ClawRunResult {
     activities: Vec<RunActivity>,
 }
 
-const DEFAULT_WEB_RUN_TIMEOUT: Duration = Duration::from_secs(180);
+const DEFAULT_WEB_RUN_TIMEOUT: Duration = Duration::from_secs(900);
 const AUTO_MODEL: &str = "claw-auto";
-const AUTO_MAX_TOTAL_TIME: Duration = Duration::from_secs(135);
+const AUTO_MAX_TOTAL_TIME: Duration = Duration::from_secs(900);
 const AUTO_SCOUT_MAX_TIME: Duration = Duration::from_secs(30);
+const LIVE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3);
 const SCOUT_TOOLS: &str = "read_file,glob_search,grep_search";
+
+type SessionBroadcaster = broadcast::Sender<super::SessionEvent>;
+
+enum ChildOutput {
+    Stdout(String),
+    Stderr(String),
+}
 
 fn execute_claw(
     model: &str,
     prompt: &str,
     conversation: &RuntimeSession,
+    broadcaster: &SessionBroadcaster,
 ) -> Result<ClawRunResult, super::ApiError> {
     let command_prompt = prompt_with_history(prompt, conversation);
     if model == AUTO_MODEL {
-        return execute_auto(&command_prompt);
+        return execute_auto(&command_prompt, broadcaster);
     }
 
-    execute_claw_process(model, &command_prompt, None, 8, web_run_timeout(), "Claw")
+    execute_claw_process(model, &command_prompt, None, 8, web_run_timeout(), "Claw", broadcaster)
 }
 
-fn execute_auto(prompt: &str) -> Result<ClawRunResult, super::ApiError> {
+fn execute_auto(
+    prompt: &str,
+    broadcaster: &SessionBroadcaster,
+) -> Result<ClawRunResult, super::ApiError> {
     let total_budget = web_run_timeout().min(AUTO_MAX_TOTAL_TIME);
     let scout_timeout = (total_budget / 3).min(AUTO_SCOUT_MAX_TIME);
     let executor_timeout = total_budget.saturating_sub(scout_timeout);
@@ -138,6 +161,7 @@ fn execute_auto(prompt: &str) -> Result<ClawRunResult, super::ApiError> {
         4,
         scout_timeout,
         "Claw scout",
+        broadcaster,
     );
     let (scout_report, mut activities) = match scout {
         Ok(result) => (
@@ -167,6 +191,7 @@ fn execute_auto(prompt: &str) -> Result<ClawRunResult, super::ApiError> {
         8,
         executor_timeout,
         "Claw executor",
+        broadcaster,
     )?;
     activities.extend(prefix_activities("Executor", executor.activities));
     Ok(ClawRunResult {
@@ -229,12 +254,14 @@ fn execute_claw_process(
     max_tool_iterations: usize,
     timeout: Duration,
     stage: &str,
+    broadcaster: &SessionBroadcaster,
 ) -> Result<ClawRunResult, super::ApiError> {
     let binary = std::env::var("CLAW_BIN").unwrap_or_else(|_| "claw".to_string());
+    let existing_sessions = snapshot_managed_sessions();
     let prompt_file = write_prompt_file(prompt)?;
     let mut command = Command::new(&binary);
     command
-        .args(["--model", model, "--output-format", "json", "--prompt-file"])
+        .args(["--model", model, "--print", "--prompt-file"])
         .arg(&prompt_file)
         .env("CLAW_MAX_TOOL_ITERATIONS", max_tool_iterations.to_string())
         .stdout(Stdio::piped())
@@ -242,22 +269,176 @@ fn execute_claw_process(
     if let Some(allowed_tools) = allowed_tools {
         command.args(["--allowed-tools", allowed_tools]);
     }
-    let mut child = command
-        .spawn()
-        .map_err(|error| {
-            internal_error(format!(
-                "could not start `{binary}`: {error}. Install Claw or set CLAW_BIN to its executable path"
-            ))
-        })?;
+
+    let mut child = command.spawn().map_err(|error| {
+        internal_error(format!(
+            "could not start `{binary}`: {error}. Install Claw or set CLAW_BIN to its executable path"
+        ))
+    })?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| internal_error("Claw stdout pipe was not available"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| internal_error("Claw stderr pipe was not available"))?;
+    let (sender, receiver) = mpsc::channel();
+    let stdout_sender = sender.clone();
+    let stdout_thread = thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if let Ok(line) = line {
+                let _ = stdout_sender.send(ChildOutput::Stdout(line));
+            } else {
+                break;
+            }
+        }
+    });
+    let stderr_thread = thread::spawn(move || {
+        let mut output = String::new();
+        let mut reader = BufReader::new(stderr);
+        if std::io::Read::read_to_string(&mut reader, &mut output).is_ok() {
+            if !output.trim().is_empty() {
+                let _ = sender.send(ChildOutput::Stderr(output));
+            }
+        }
+    });
+
+    publish_activity(
+        broadcaster,
+        RunActivity {
+            kind: "process".to_string(),
+            label: format!("{stage} · started"),
+            detail: format!("model {model} · live work log enabled"),
+            is_error: false,
+        },
+    );
+
     let started = Instant::now();
+    let mut last_heartbeat = Instant::now();
+    let mut live_tool: Option<String> = None;
+    let mut stderr_output = String::new();
     loop {
+        loop {
+            match receiver.try_recv() {
+                Ok(ChildOutput::Stdout(line)) => {
+                    publish_child_stdout_line(
+                        broadcaster,
+                        stage,
+                        &line,
+                        &mut live_tool,
+                    );
+                }
+                Ok(ChildOutput::Stderr(output)) => stderr_output.push_str(&output),
+                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+            }
+        }
+
         match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() < timeout => thread::sleep(Duration::from_millis(200)),
+            Ok(Some(status)) => {
+                stdout_thread.join().ok();
+                stderr_thread.join().ok();
+                loop {
+                    match receiver.try_recv() {
+                        Ok(ChildOutput::Stdout(line)) => publish_child_stdout_line(
+                            broadcaster,
+                            stage,
+                            &line,
+                            &mut live_tool,
+                        ),
+                        Ok(ChildOutput::Stderr(output)) => stderr_output.push_str(&output),
+                        Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
+                    }
+                }
+                let _ = std::fs::remove_file(&prompt_file);
+                if !status.success() {
+                    let detail = if stderr_output.trim().is_empty() {
+                        format!("Claw exited with status {status}")
+                    } else {
+                        stderr_output.trim().to_string()
+                    };
+                    publish_activity(
+                        broadcaster,
+                        RunActivity {
+                            kind: "process".to_string(),
+                            label: format!("{stage} · failed"),
+                            detail: truncate(&detail, 500),
+                            is_error: true,
+                        },
+                    );
+                    return Err(internal_error(detail));
+                }
+
+                let session_path = latest_new_session(&existing_sessions);
+                let result = session_path
+                    .and_then(|path| RuntimeSession::load_from_path(path).ok())
+                    .map(claw_run_result_from_session);
+                let Some(result) = result else {
+                    let detail = if stderr_output.trim().is_empty() {
+                        "Claw completed but no persisted session result was found".to_string()
+                    } else {
+                        stderr_output.trim().to_string()
+                    };
+                    publish_activity(
+                        broadcaster,
+                        RunActivity {
+                            kind: "process".to_string(),
+                            label: format!("{stage} · failed"),
+                            detail: truncate(&detail, 500),
+                            is_error: true,
+                        },
+                    );
+                    return Err(internal_error(detail));
+                };
+
+                publish_activity(
+                    broadcaster,
+                    RunActivity {
+                        kind: "process".to_string(),
+                        label: format!("{stage} · completed"),
+                        detail: format!("{}s elapsed", started.elapsed().as_secs()),
+                        is_error: false,
+                    },
+                );
+                return Ok(result);
+            }
+            Ok(None) if started.elapsed() < timeout => {
+                if last_heartbeat.elapsed() >= LIVE_HEARTBEAT_INTERVAL {
+                    publish_activity(
+                        broadcaster,
+                        RunActivity {
+                            kind: "heartbeat".to_string(),
+                            label: format!("{stage} · running"),
+                            detail: format!(
+                                "{}s elapsed · waiting for the next tool event",
+                                started.elapsed().as_secs()
+                            ),
+                            is_error: false,
+                        },
+                    );
+                    last_heartbeat = Instant::now();
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                stdout_thread.join().ok();
+                stderr_thread.join().ok();
                 let _ = std::fs::remove_file(&prompt_file);
+                publish_activity(
+                    broadcaster,
+                    RunActivity {
+                        kind: "process".to_string(),
+                        label: format!("{stage} · timeout"),
+                        detail: format!(
+                            "stopped after {} seconds while still working",
+                            timeout.as_secs()
+                        ),
+                        is_error: true,
+                    },
+                );
                 return Err(internal_error(format!(
                     "{stage} did not finish within {} seconds. It was stopped before it could keep consuming tools.",
                     timeout.as_secs()
@@ -265,34 +446,168 @@ fn execute_claw_process(
             }
             Err(error) => {
                 let _ = std::fs::remove_file(&prompt_file);
+                publish_activity(
+                    broadcaster,
+                    RunActivity {
+                        kind: "process".to_string(),
+                        label: format!("{stage} · monitor error"),
+                        detail: error.to_string(),
+                        is_error: true,
+                    },
+                );
                 return Err(internal_error(format!("could not monitor Claw: {error}")));
             }
         }
     }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| internal_error(format!("could not collect Claw output: {error}")));
-    let _ = std::fs::remove_file(&prompt_file);
-    let output = output?;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(internal_error(if stderr.is_empty() {
-            stdout
-        } else {
-            stderr
-        }));
-    }
+}
 
-    let response: CliPromptResponse = serde_json::from_str(&stdout).map_err(|error| {
-        internal_error(format!(
-            "Claw returned invalid structured output: {error}. Ensure CLAW_BIN points to the current Claw executable"
-        ))
-    })?;
-    Ok(ClawRunResult {
-        message: response.message.trim().to_string(),
-        activities: response.into_activities(),
-    })
+fn publish_child_stdout_line(
+    broadcaster: &SessionBroadcaster,
+    stage: &str,
+    line: &str,
+    live_tool: &mut Option<String>,
+) {
+    let clean = strip_ansi(line).trim().to_string();
+    if clean.is_empty() {
+        return;
+    }
+    if let Some(name) = clean
+        .strip_prefix("╭─ ")
+        .and_then(|value| value.strip_suffix(" ─╮"))
+    {
+        *live_tool = Some(name.trim().to_string());
+        return;
+    }
+    if let (Some(name), Some(detail)) = (live_tool.as_ref(), clean.strip_prefix("│ ")) {
+        publish_activity(
+            broadcaster,
+            RunActivity {
+                kind: "tool_call".to_string(),
+                label: format!("{stage} · {name}"),
+                detail: truncate(detail.trim(), 500),
+                is_error: false,
+            },
+        );
+        *live_tool = None;
+        return;
+    }
+    if clean.starts_with('✓') || clean.starts_with('✗') {
+        let is_error = clean.starts_with('✗');
+        let detail = clean
+            .trim_start_matches(['✓', '✗'])
+            .trim()
+            .to_string();
+        publish_activity(
+            broadcaster,
+            RunActivity {
+                kind: "tool_result".to_string(),
+                label: format!("{stage} · {detail}"),
+                detail: "tool result received".to_string(),
+                is_error,
+            },
+        );
+    }
+}
+
+fn publish_activity(broadcaster: &SessionBroadcaster, activity: RunActivity) {
+    let _ = broadcaster.send(super::SessionEvent::Activity {
+        session_id: String::new(),
+        activity,
+    });
+}
+
+fn strip_ansi(value: &str) -> String {
+    let mut clean = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if chars.next() == Some('[') {
+                for code in chars.by_ref() {
+                    if code.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        clean.push(ch);
+    }
+    clean
+}
+
+fn snapshot_managed_sessions() -> HashSet<PathBuf> {
+    let directory = std::env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join(".claw").join("sessions"));
+    directory
+        .and_then(|path| std::fs::read_dir(path).ok())
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("json"))
+        .collect()
+}
+
+fn latest_new_session(existing: &HashSet<PathBuf>) -> Option<PathBuf> {
+    snapshot_managed_sessions()
+        .into_iter()
+        .filter(|path| !existing.contains(path))
+        .filter_map(|path| {
+            let modified = std::fs::metadata(&path).ok()?.modified().ok()?;
+            Some((modified, path))
+        })
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
+}
+
+fn claw_run_result_from_session(session: RuntimeSession) -> ClawRunResult {
+    let message = session
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == MessageRole::Assistant)
+        .map(|message| {
+            message
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    let activities = session
+        .messages
+        .iter()
+        .flat_map(|message| message.blocks.iter())
+        .filter_map(|block| match block {
+            ContentBlock::ToolUse { name, input, .. } => Some(RunActivity {
+                kind: "tool_call".to_string(),
+                label: name.clone(),
+                detail: summarize_input(&Value::String(input.clone())),
+                is_error: false,
+            }),
+            ContentBlock::ToolResult {
+                tool_name,
+                output,
+                is_error,
+                ..
+            } => Some(RunActivity {
+                kind: "tool_result".to_string(),
+                label: tool_name.clone(),
+                detail: truncate(output, 500),
+                is_error: *is_error,
+            }),
+            _ => None,
+        })
+        .collect();
+
+    ClawRunResult { message, activities }
 }
 
 fn web_run_timeout() -> Duration {
@@ -357,54 +672,6 @@ fn prompt_with_history(prompt: &str, conversation: &RuntimeSession) -> String {
     )
 }
 
-#[derive(Debug, Deserialize)]
-struct CliPromptResponse {
-    #[serde(default)]
-    message: String,
-    #[serde(default)]
-    tool_uses: Vec<CliToolUse>,
-    #[serde(default)]
-    tool_results: Vec<CliToolResult>,
-}
-
-impl CliPromptResponse {
-    fn into_activities(self) -> Vec<RunActivity> {
-        let mut activities = self
-            .tool_uses
-            .into_iter()
-            .map(|tool| RunActivity {
-                kind: "tool_call".to_string(),
-                label: tool.name,
-                detail: summarize_input(&tool.input),
-                is_error: false,
-            })
-            .collect::<Vec<_>>();
-        activities.extend(self.tool_results.into_iter().map(|tool| RunActivity {
-            kind: "tool_result".to_string(),
-            label: tool.tool_name,
-            detail: truncate(&tool.output, 500),
-            is_error: tool.is_error,
-        }));
-        activities
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct CliToolUse {
-    name: String,
-    #[serde(default)]
-    input: Value,
-}
-
-#[derive(Debug, Deserialize)]
-struct CliToolResult {
-    tool_name: String,
-    #[serde(default)]
-    output: String,
-    #[serde(default)]
-    is_error: bool,
-}
-
 fn summarize_input(value: &Value) -> String {
     let raw = value
         .as_str()
@@ -442,29 +709,9 @@ fn internal_error(message: impl Into<String>) -> super::ApiError {
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_executor_model, prompt_with_history, web_run_timeout_from_env, CliPromptResponse,
-        DEFAULT_WEB_RUN_TIMEOUT,
+        auto_executor_model, prompt_with_history, web_run_timeout_from_env, DEFAULT_WEB_RUN_TIMEOUT,
     };
     use runtime::{ConversationMessage, Session};
-
-    #[test]
-    fn separates_tool_activity_from_the_final_message() {
-        let response: CliPromptResponse = serde_json::from_str(
-            r#"{
-                "message":"Repository has two crates.",
-                "tool_uses":[{"name":"bash","input":"{\"command\":\"rg --files\"}"}],
-                "tool_results":[{"tool_name":"bash","output":"Cargo.toml","is_error":false}]
-            }"#,
-        )
-        .expect("fixture should parse");
-
-        assert_eq!(response.message, "Repository has two crates.");
-        let activities = response.into_activities();
-        assert_eq!(activities.len(), 2);
-        assert_eq!(activities[0].label, "bash");
-        assert_eq!(activities[0].detail, "rg --files");
-        assert_eq!(activities[1].detail, "Cargo.toml");
-    }
 
     #[test]
     fn includes_persisted_messages_in_follow_up_prompt() {
