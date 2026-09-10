@@ -381,8 +381,8 @@ mod tests {
         assert_eq!(completed.error.as_deref(), Some("boom"));
     }
 
-    #[test]
-    fn duplicate_ids_are_rejected() {
+    #[tokio::test]
+    async fn duplicate_ids_are_rejected() {
         let registry = SubagentRegistry::new();
         let first = registry.spawn("same", None, "first", |_cancel| async {
             Ok("done".to_string())
@@ -392,5 +392,6 @@ mod tests {
             Ok("done".to_string())
         });
         assert!(matches!(second, Err(super::SubagentError::DuplicateId(id)) if id == "same"));
+        let _ = first.expect("first spawn").join().await.expect("first join");
     }
 }
