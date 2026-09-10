@@ -76,7 +76,7 @@ fn mutate_hook(
     let commands = ensure_string_array(hooks, event, &path)?;
 
     let changed = if add {
-        if commands.iter().any(|value| value == command) {
+        if commands.iter().any(|value| value.as_str() == Some(command)) {
             false
         } else {
             commands.push(Value::String(command.to_string()));
@@ -193,14 +193,23 @@ fn write_settings(path: &Path, root: &Value) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEMP_WORKSPACE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn temp_workspace() -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        std::env::temp_dir().join(format!("claw-hooks-{nonce}"))
+        let counter = TEMP_WORKSPACE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "claw-hooks-{}-{}-{}",
+            std::process::id(),
+            nonce,
+            counter
+        ))
     }
 
     #[test]
