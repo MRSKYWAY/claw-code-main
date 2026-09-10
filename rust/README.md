@@ -127,7 +127,7 @@ Parallelize only read-only discovery and review work. Keep writing agents sequen
 - Gemini and NVIDIA model/provider selection from the command line
 - Workspace-aware instruction/config loading (`CLAW.md`, config files, permissions, plugin settings)
 - Gemini support uses the standard `generateContent` endpoint with synthesized streaming in v1, so the existing CLI/runtime event loop still works unchanged
-- NVIDIA Build models use the OpenAI-compatible chat-completions endpoint. Available aliases are `nvidia-fast` (`deepseek-ai/deepseek-v4-flash-0731`), `nvidia-plan` (`moonshotai/kimi-k3`), `nvidia-agent` (`deepseek-ai/deepseek-v4-pro-0813`), and `nvidia-long` (`deepseek-ai/deepseek-v4-pro-0813`).
+- NVIDIA Build models use the OpenAI-compatible chat-completions endpoint. The NVIDIA aliases are `nvidia-fast` (`nvidia/nemotron-3.5-lightning-30b-a3b`), `nvidia-plan` (`moonshotai/kimi-k3`), `nvidia-agent` (`nvidia/nemotron-3-ultra-550b-a55b`), and `nvidia-long` (`nvidia/nemotron-3-ultra-550b-a55b`).
 - Gemini aliases are `gemini-flash` (`gemini-3.8-flash`) and `gemini-pro` (`gemini-3.1-pro-preview`). Gemini uses the standard content-generation endpoint with synthesized streaming in this release.
 - Run `claw models --check` after setting `NVIDIA_API_KEY` or `GEMINI_API_KEY` to verify current account availability without exposing key material.
 - Background agents automatically route to lighter or specialized NVIDIA aliases when `NVIDIA_API_KEY` is configured and no explicit agent model is requested. This keeps exploration and planning work off the local machine and caps each agent type to a smaller iteration budget.
