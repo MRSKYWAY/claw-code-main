@@ -64,12 +64,14 @@ pub async fn run_prompt(
     let model = model.to_string();
     let command_prompt = prompt.clone();
     let command_model = model.clone();
+    let command_session_id = id.clone();
     let command_broadcaster = broadcaster.clone();
     let result = tokio::task::spawn_blocking(move || {
         execute_claw(
             &command_model,
             &command_prompt,
             &conversation,
+            &command_session_id,
             &command_broadcaster,
         )
     })
@@ -133,18 +135,29 @@ fn execute_claw(
     model: &str,
     prompt: &str,
     conversation: &RuntimeSession,
+    session_id: &str,
     broadcaster: &SessionBroadcaster,
 ) -> Result<ClawRunResult, super::ApiError> {
     let command_prompt = prompt_with_history(prompt, conversation);
     if model == AUTO_MODEL {
-        return execute_auto(&command_prompt, broadcaster);
+        return execute_auto(&command_prompt, session_id, broadcaster);
     }
 
-    execute_claw_process(model, &command_prompt, None, 8, web_run_timeout(), "Claw", broadcaster)
+    execute_claw_process(
+        model,
+        &command_prompt,
+        None,
+        8,
+        web_run_timeout(),
+        "Claw",
+        session_id,
+        broadcaster,
+    )
 }
 
 fn execute_auto(
     prompt: &str,
+    session_id: &str,
     broadcaster: &SessionBroadcaster,
 ) -> Result<ClawRunResult, super::ApiError> {
     let total_budget = web_run_timeout().min(AUTO_MAX_TOTAL_TIME);
@@ -161,6 +174,7 @@ fn execute_auto(
         4,
         scout_timeout,
         "Claw scout",
+        session_id,
         broadcaster,
     );
     let (scout_report, mut activities) = match scout {
@@ -191,6 +205,7 @@ fn execute_auto(
         8,
         executor_timeout,
         "Claw executor",
+        session_id,
         broadcaster,
     )?;
     activities.extend(prefix_activities("Executor", executor.activities));
@@ -254,6 +269,7 @@ fn execute_claw_process(
     max_tool_iterations: usize,
     timeout: Duration,
     stage: &str,
+    session_id: &str,
     broadcaster: &SessionBroadcaster,
 ) -> Result<ClawRunResult, super::ApiError> {
     let binary = std::env::var("CLAW_BIN").unwrap_or_else(|_| "claw".to_string());
@@ -307,6 +323,7 @@ fn execute_claw_process(
 
     publish_activity(
         broadcaster,
+        session_id,
         RunActivity {
             kind: "process".to_string(),
             label: format!("{stage} · started"),
@@ -325,6 +342,7 @@ fn execute_claw_process(
                 Ok(ChildOutput::Stdout(line)) => {
                     publish_child_stdout_line(
                         broadcaster,
+                        session_id,
                         stage,
                         &line,
                         &mut live_tool,
@@ -343,6 +361,7 @@ fn execute_claw_process(
                     match receiver.try_recv() {
                         Ok(ChildOutput::Stdout(line)) => publish_child_stdout_line(
                             broadcaster,
+                            session_id,
                             stage,
                             &line,
                             &mut live_tool,
@@ -360,6 +379,7 @@ fn execute_claw_process(
                     };
                     publish_activity(
                         broadcaster,
+                        session_id,
                         RunActivity {
                             kind: "process".to_string(),
                             label: format!("{stage} · failed"),
@@ -382,6 +402,7 @@ fn execute_claw_process(
                     };
                     publish_activity(
                         broadcaster,
+                        session_id,
                         RunActivity {
                             kind: "process".to_string(),
                             label: format!("{stage} · failed"),
@@ -394,6 +415,7 @@ fn execute_claw_process(
 
                 publish_activity(
                     broadcaster,
+                    session_id,
                     RunActivity {
                         kind: "process".to_string(),
                         label: format!("{stage} · completed"),
@@ -407,6 +429,7 @@ fn execute_claw_process(
                 if last_heartbeat.elapsed() >= LIVE_HEARTBEAT_INTERVAL {
                     publish_activity(
                         broadcaster,
+                        session_id,
                         RunActivity {
                             kind: "heartbeat".to_string(),
                             label: format!("{stage} · running"),
@@ -429,6 +452,7 @@ fn execute_claw_process(
                 let _ = std::fs::remove_file(&prompt_file);
                 publish_activity(
                     broadcaster,
+                    session_id,
                     RunActivity {
                         kind: "process".to_string(),
                         label: format!("{stage} · timeout"),
@@ -448,6 +472,7 @@ fn execute_claw_process(
                 let _ = std::fs::remove_file(&prompt_file);
                 publish_activity(
                     broadcaster,
+                    session_id,
                     RunActivity {
                         kind: "process".to_string(),
                         label: format!("{stage} · monitor error"),
@@ -463,6 +488,7 @@ fn execute_claw_process(
 
 fn publish_child_stdout_line(
     broadcaster: &SessionBroadcaster,
+    session_id: &str,
     stage: &str,
     line: &str,
     live_tool: &mut Option<String>,
@@ -481,6 +507,7 @@ fn publish_child_stdout_line(
     if let (Some(name), Some(detail)) = (live_tool.as_ref(), clean.strip_prefix("│ ")) {
         publish_activity(
             broadcaster,
+            session_id,
             RunActivity {
                 kind: "tool_call".to_string(),
                 label: format!("{stage} · {name}"),
@@ -499,6 +526,7 @@ fn publish_child_stdout_line(
             .to_string();
         publish_activity(
             broadcaster,
+            session_id,
             RunActivity {
                 kind: "tool_result".to_string(),
                 label: format!("{stage} · {detail}"),
@@ -509,9 +537,13 @@ fn publish_child_stdout_line(
     }
 }
 
-fn publish_activity(broadcaster: &SessionBroadcaster, activity: RunActivity) {
+fn publish_activity(
+    broadcaster: &SessionBroadcaster,
+    session_id: &str,
+    activity: RunActivity,
+) {
     let _ = broadcaster.send(super::SessionEvent::Activity {
-        session_id: String::new(),
+        session_id: session_id.to_string(),
         activity,
     });
 }
