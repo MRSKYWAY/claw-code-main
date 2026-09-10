@@ -13,13 +13,13 @@ permissions:
 
 jobs:
   phase-10d-repair:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'phase-10d-task-inspection' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'phase-10d-task-inspection') && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Check out Phase 10D branch
         uses: actions/checkout@v4
         with:
-          ref: phase-10d-task-inspection
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
       - name: Apply Phase 10D source fixes
         run: |
@@ -65,7 +65,7 @@ jobs:
           git add rust/crates/commands/src/lib.rs .github/workflows
           git diff --cached --check
           git commit -m 'fix: complete phase 10d task inspection'
-          git push origin HEAD:phase-10d-task-inspection
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
 
   rust:
     name: ${{ matrix.os }}
