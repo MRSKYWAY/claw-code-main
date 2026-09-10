@@ -24,7 +24,8 @@ use api::{
 
 use commands::{
     handle_agents_slash_command, handle_hooks_slash_command, handle_plugins_slash_command,
-    handle_skills_slash_command, render_slash_command_help, resume_supported_slash_commands,
+    handle_skills_slash_command, render_mcp_report, render_slash_command_help,
+    resume_supported_slash_commands,
     slash_command_specs, suggest_slash_commands, SlashCommand,
 };
 use compat_harness::{extract_manifest, UpstreamPaths};
@@ -1066,6 +1067,14 @@ fn run_resume_command(
                 message: Some(format_cost_report(usage)),
             })
         }
+        SlashCommand::Mcp => Ok(ResumeCommandOutcome {
+            session: session.clone(),
+            message: Some({
+                let cwd = env::current_dir()?;
+                let config = ConfigLoader::default_for(&cwd).load()?;
+                render_mcp_report(config.mcp().servers())
+            }),
+        }),
         SlashCommand::Config { section } => Ok(ResumeCommandOutcome {
             session: session.clone(),
             message: Some(render_config_report(section.as_deref())?),
@@ -1378,6 +1387,10 @@ impl LiveCli {
                 self.print_status();
                 false
             }
+            SlashCommand::Mcp => {
+                Self::print_mcp()?;
+                false
+            }
             SlashCommand::Bughunter { scope } => {
                 self.run_bughunter(scope.as_deref())?;
                 false
@@ -1665,6 +1678,13 @@ impl LiveCli {
             )
         );
         Ok(true)
+    }
+
+    fn print_mcp() -> Result<(), Box<dyn std::error::Error>> {
+        let cwd = env::current_dir()?;
+        let config = ConfigLoader::default_for(&cwd).load()?;
+        println!("{}", render_mcp_report(config.mcp().servers()));
+        Ok(())
     }
 
     fn print_config(section: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
@@ -4596,6 +4616,14 @@ mod tests {
     }
 
     #[test]
+    fn parses_mcp_as_interactive_command() {
+        assert_eq!(
+            super::SlashCommand::parse("/mcp"),
+            Some(super::SlashCommand::Mcp)
+        );
+    }
+
+    #[test]
     fn parses_direct_agents_and_skills_slash_commands() {
         assert_eq!(
             parse_args(&["/agents".to_string()]).expect("/agents should parse"),
@@ -4750,7 +4778,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "help", "status", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",
+                "help", "status", "mcp", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",
                 "version", "export", "agents", "skills",
             ]
         );

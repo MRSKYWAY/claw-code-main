@@ -10,6 +10,9 @@ mod hooks;
 
 pub use hooks::handle_hooks_slash_command;
 
+use std::fmt::Write as _;
+use runtime::{ConfigSource, McpServerConfig, McpTransport, ScopedMcpServerConfig};
+
 use plugins::{PluginError, PluginManager, PluginSummary};
 use runtime::{compact_session, CompactionConfig, Session};
 
@@ -90,6 +93,14 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         argument_hint: None,
         resume_supported: true,
         category: SlashCommandCategory::Core,
+    },
+    SlashCommandSpec {
+        name: "mcp",
+        aliases: &[],
+        summary: "Inspect configured MCP servers",
+        argument_hint: None,
+        resume_supported: true,
+        category: SlashCommandCategory::Automation,
     },
     SlashCommandSpec {
         name: "hooks",
@@ -315,6 +326,7 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
 pub enum SlashCommand {
     Help,
     Status,
+    Mcp,
     Compact,
     Branch {
         action: Option<String>,
@@ -398,6 +410,7 @@ impl SlashCommand {
         Some(match command {
             "help" => Self::Help,
             "status" => Self::Status,
+            "mcp" => Self::Mcp,
             "hooks" => Self::Config {
                 section: Some(match remainder_after_command(trimmed, command) {
                     Some(remainder) => format!("hooks {remainder}"),
@@ -477,6 +490,67 @@ impl SlashCommand {
             other => Self::Unknown(other.to_string()),
         })
     }
+}
+
+
+#[must_use]
+pub fn render_mcp_report(
+    servers: &std::collections::BTreeMap<String, ScopedMcpServerConfig>,
+) -> String {
+    let mut lines = vec![
+        "MCP servers".to_string(),
+        format!("  Configured       {}", servers.len()),
+    ];
+
+    if servers.is_empty() {
+        lines.push("  No MCP servers are configured.".to_string());
+        lines.push(
+            "  Add a server to project/user Claw settings, then rerun this command.".to_string(),
+        );
+        return lines.join("\n");
+    }
+
+    lines.push(String::new());
+    lines.push("Configured servers".to_string());
+    for (name, server) in servers {
+        let scope = match server.scope {
+            ConfigSource::User => "user",
+            ConfigSource::Project => "project",
+            ConfigSource::Local => "local",
+        };
+        let transport = match server.transport() {
+            McpTransport::Stdio => "stdio",
+            McpTransport::Sse => "sse",
+            McpTransport::Http => "http",
+            McpTransport::Ws => "websocket",
+            McpTransport::Sdk => "sdk",
+            McpTransport::ManagedProxy => "managed-proxy",
+        };
+        lines.push(format!("  {name:<24} {transport:<14} scope={scope}"));
+        match &server.config {
+            McpServerConfig::Stdio(config) => {
+                let mut command = config.command.clone();
+                for arg in &config.args {
+                    let _ = write!(command, " {arg}");
+                }
+                lines.push(format!("    target           {command}"));
+            }
+            McpServerConfig::Sse(config) | McpServerConfig::Http(config) => {
+                lines.push(format!("    target           {}", config.url));
+            }
+            McpServerConfig::Ws(config) => {
+                lines.push(format!("    target           {}", config.url));
+            }
+            McpServerConfig::Sdk(config) => {
+                lines.push(format!("    target           {}", config.name));
+            }
+            McpServerConfig::ManagedProxy(config) => {
+                lines.push(format!("    target           {} ({})", config.url, config.id));
+            }
+        }
+    }
+
+    lines.join("\n")
 }
 
 fn remainder_after_command(input: &str, command: &str) -> Option<String> {
@@ -1801,6 +1875,7 @@ pub fn handle_slash_command(
         | SlashCommand::Plugins { .. }
         | SlashCommand::Agents { .. }
         | SlashCommand::Skills { .. }
+        | SlashCommand::Mcp
         | SlashCommand::Unknown(_) => None,
     }
 }
@@ -2182,8 +2257,8 @@ mod tests {
         assert!(help.contains("aliases: /plugins, /marketplace"));
         assert!(help.contains("/agents"));
         assert!(help.contains("/skills"));
-        assert_eq!(slash_command_specs().len(), 29);
-        assert_eq!(resume_supported_slash_commands().len(), 14);
+        assert_eq!(slash_command_specs().len(), 30);
+        assert_eq!(resume_supported_slash_commands().len(), 15);
     }
 
     #[test]

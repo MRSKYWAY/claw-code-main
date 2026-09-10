@@ -29,7 +29,7 @@ The project is still **not feature-parity** with the TypeScript CLI. The highest
 
 - Broader TypeScript tool families and workflow/system tools
 - TypeScript-style remote/structured assistant transport layers
-- First-class interactive `/mcp`, `/plan`, `/review`, `/tasks`, and related command-family parity
+- First-class interactive `/plan`, `/review`, `/tasks`, and related command-family parity
 - Bundled/MCP-backed skill registry and richer live discovery/reload semantics
 - Broader service ecosystem such as analytics, settings sync, policy limits, team memory, notifier, and voice layers
 - Full transport- and event-level parity for machine-readable/remote assistant execution
@@ -160,10 +160,11 @@ Core provider APIs, OAuth, usage accounting, MCP bootstrap/client support, remot
 - **Phase 8D:** suppressed terminal spinners and streamed tool UI in machine-readable CLI output modes.
 - **Phase 9A:** added first-class `/hooks` command discovery and inspection routing.
 - **Phase 9B:** added local `/hooks add` and `/hooks remove` persistence while preserving merged runtime defaults.
+- **Phase 9D:** wired the runtime-backed MCP inspector into the interactive `/mcp` slash-command registry.
 
 ## recommended next implementation targets
 
-1. Finish the MCP command family by wiring the inspector into the interactive `/mcp` slash-command registry.
+1. Expand `/mcp` beyond inspection into connection lifecycle and richer interactive MCP management.
 2. Expand structured/remote assistant transport semantics beyond the local JSON prompt path.
 3. Add the next missing TypeScript command family only after its underlying runtime capability is represented in Rust.
 4. Continue closing the service and tool-family gaps with focused, independently testable slices.
