@@ -157,15 +157,15 @@ mod tests {
 
     #[test]
     fn resolves_gemini_and_nvidia_aliases() {
-        assert_eq!(resolve_model_alias("gemini-flash"), "gemini-3.7-flash");
+        assert_eq!(resolve_model_alias("gemini-flash"), "gemini-3.8-flash");
         assert_eq!(resolve_model_alias("gemini-pro"), "gemini-3.1-pro-preview");
-        assert_eq!(resolve_model_alias("nvidia-fast"), "deepseek-ai/deepseek-v4-flash");
+        assert_eq!(resolve_model_alias("nvidia-fast"), "deepseek-ai/deepseek-v4-flash-0731");
     }
 
     #[test]
     fn provider_detection_prefers_model_family() {
         assert_eq!(
-            detect_provider_kind("gemini-3.7-flash"),
+            detect_provider_kind("gemini-3.8-flash"),
             ProviderKind::Gemini
         );
         assert_eq!(detect_provider_kind("nvidia-agent"), ProviderKind::Nvidia);
