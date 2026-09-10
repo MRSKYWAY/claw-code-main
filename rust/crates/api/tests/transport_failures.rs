@@ -28,6 +28,15 @@ async fn refused_connection_is_retryable_and_does_not_panic() {
         .await
         .expect_err("closed listener should produce a transport error");
 
-    assert!(matches!(error, ApiError::Http(_)));
-    assert!(error.is_retryable());
+    match error {
+        ApiError::RetriesExhausted {
+            attempts,
+            last_error,
+        } => {
+            assert_eq!(attempts, 1);
+            assert!(matches!(*last_error, ApiError::Http(_)));
+            assert!(last_error.is_retryable());
+        }
+        other => panic!("expected retry exhaustion, got {other:?}"),
+    }
 }
