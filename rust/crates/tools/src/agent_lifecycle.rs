@@ -238,7 +238,8 @@ fn sync_runtime_agent_state(path: &Path, contents: &str) {
 /// parent edge without changing the large Agent tool surface or relying on process-global
 /// mutable context. A worker never becomes its own parent.
 fn current_agent_parent_id(agent_id: &str) -> Option<String> {
-    let name = std::thread::current().name()?;
+    let current = std::thread::current();
+    let name = current.name()?;
     let parent_id = name
         .strip_prefix("claw-agent-")
         .filter(|id| !id.is_empty())?;
