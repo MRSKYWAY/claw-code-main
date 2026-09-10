@@ -39,15 +39,11 @@ jobs:
           cli = Path("crates/claw-cli/src/main.rs")
           text = cli.read_text()
           old = '                "help", "status", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",\n                "version", "export", "agents", "skills",'
-          new = '                "help", "status", "mcp", "hooks", "compact", "clear", "clear", "cost", "config", "memory", "init", "diff",\n                "version", "export", "agents", "skills",'
-          if old in text:
-              cli.write_text(text.replace(old, new.replace("clear", "clear", 1), 1))
-          else:
-              old = '                "help", "status", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",\n                "version", "export", "agents", "skills",'
-              new = '                "help", "status", "mcp", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",\n                "version", "export", "agents", "skills",'
-              if old not in text:
-                  raise SystemExit("CLI slash-command surface regression anchor not found")
-              cli.write_text(text.replace(old, new, 1))
+          new = '                "help", "status", "mcp", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",\n                "version", "export", "agents", "skills",'
+          if old not in text:
+              raise SystemExit("CLI slash-command surface regression anchor not found")
+          cli.write_text(text.replace(old, new, 1))
+          PY
       - name: Validate patch
         working-directory: rust
         run: |
