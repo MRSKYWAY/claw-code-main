@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  rust:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run cargo clippy (workspace libraries and binaries)
+        working-directory: rust
+        run: cargo clippy --workspace --lib --bins
+
+      - name: Run cargo clippy (commands, all targets)
+        working-directory: rust
+        run: cargo clippy -p commands --all-targets
+
+      - name: Run cargo check
+        working-directory: rust
+        run: cargo check --workspace
+
+      - name: Run cargo test (workspace packages except tools test target)
+        working-directory: rust
+        run: cargo test --workspace --exclude tools
+
+      - name: Run release build
+        working-directory: rust
+        run: cargo build --release

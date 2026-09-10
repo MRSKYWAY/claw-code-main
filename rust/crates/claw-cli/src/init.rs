@@ -334,16 +334,20 @@ fn framework_notes(detection: &RepoDetection) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{initialize_repo, render_init_claw_md};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn temp_dir() -> std::path::PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time should be after epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("claw-init-{nanos}"))
+        let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("claw-init-{}-{nanos}-{counter}", std::process::id()))
     }
 
     #[test]

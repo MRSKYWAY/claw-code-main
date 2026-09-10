@@ -1,17 +1,23 @@
 use plugins::{PluginManager, PluginManagerConfig};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct TempDir(PathBuf);
 
 impl TempDir {
     fn new(prefix: &str) -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after unix epoch")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("{prefix}-{nanos}"));
+        let unique_id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "{prefix}-{}-{nanos}-{unique_id}",
+            std::process::id()
+        ));
         fs::create_dir_all(&path).expect("temporary directory should be created");
         Self(path)
     }
@@ -45,7 +51,9 @@ fn write_manifest(root: &Path, version: &str, description: &str) {
 
 fn manager_root() -> (TempDir, PluginManager) {
     let config_home = TempDir::new("claw-plugin-config");
-    let manager = PluginManager::new(PluginManagerConfig::new(config_home.path()));
+    let mut config = PluginManagerConfig::new(config_home.path());
+    config.bundled_root = Some(config_home.path().join("bundled").join("none"));
+    let manager = PluginManager::new(config);
     (config_home, manager)
 }
 

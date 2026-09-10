@@ -6,7 +6,7 @@ Method: compare feature surfaces, registries, entrypoints, runtime plumbing, and
 
 ## Executive summary
 
-The Rust port now has a substantially broader foundation than the original parity snapshot recorded earlier in development. Core runtime policy, hooks, plugins, agents, skills, MCP discovery, CLI command handling, and machine-readable output have all received focused implementation or hardening work.
+The Rust port now has a substantially broader foundation than the original parity snapshot recorded earlier in development. Core runtime policy, hooks, plugins, agents, skills, MCP discovery, CLI command handling, and local machine-readable output have all received focused implementation or hardening work.
 
 The project is still **not feature-parity** with the TypeScript CLI. The highest-value remaining gaps are concentrated in orchestration breadth, remote/structured transport richness, and the long tail of TypeScript service integrations.
 
@@ -16,19 +16,20 @@ The project is still **not feature-parity** with the TypeScript CLI. The highest
 - Local session persistence, compaction, resume, and runtime status
 - Tool calling with explicit permission policy decisions
 - PreToolUse/PostToolUse hook execution with denial semantics and bounded timeouts
+- `/hooks` inspection and local hook add/remove management backed by workspace-local settings
 - Plugin discovery, installation, enable/disable, uninstall/update, hook execution, and bounded tool execution
 - Agent lifecycle/concurrency coordination and live agent dispatch
 - Local skill and agent discovery across project/user roots
 - MCP stdio/bootstrap support, result normalization, and discovered-tool registry integration
-- Shared slash-command registry with `/agents`, `/skills`, and plugin management
-- JSON/NDJSON-oriented CLI output path with terminal UI suppressed in machine-readable modes
+- Shared slash-command registry with `/hooks`, `/agents`, `/skills`, and plugin management
+- JSON-oriented CLI output with terminal UI suppressed in machine-readable mode
 - Local web runtime-status reporting
 
 ### Remaining major gaps
 
 - Broader TypeScript tool families and workflow/system tools
 - TypeScript-style remote/structured assistant transport layers
-- Full `/hooks`, `/mcp`, `/plan`, `/review`, `/tasks`, and related command-family parity
+- First-class interactive `/mcp`, `/plan`, `/review`, `/tasks`, and related command-family parity
 - Bundled/MCP-backed skill registry and richer live discovery/reload semantics
 - Broader service ecosystem such as analytics, settings sync, policy limits, team memory, notifier, and voice layers
 - Full transport- and event-level parity for machine-readable/remote assistant execution
@@ -53,15 +54,14 @@ The major TypeScript families still without dedicated Rust equivalents include u
 
 ### Rust status
 
-Hook configuration is loaded into runtime state, and the live conversation path evaluates policy and executes PreToolUse/PostToolUse hooks. Hook results have explicit Allow/Deny decisions, denial is enforced before tool execution, and hook processes are bounded by configurable timeouts.
+Hook configuration is loaded into runtime state, and the live conversation path evaluates policy and executes PreToolUse/PostToolUse hooks. Hook results have explicit Allow/Deny decisions, denial is enforced before tool execution, and hook processes are bounded by configurable timeouts. `/hooks` is now a first-class slash command with local add/remove persistence.
 
 ### Remaining gaps
 
-- No dedicated Rust `/hooks` command family yet
-- No full TypeScript-style hook management UX
-- No broader hook transport/extension model beyond the current command-backed execution path
+- Broader hook transport/extension model beyond the current command-backed execution path
+- Richer remote/team hook management parity
 
-**Status:** runtime execution is implemented; command/management parity remains incomplete.
+**Status:** runtime and local command management implemented; broader extension/transport parity remains incomplete.
 
 ---
 
@@ -102,11 +102,11 @@ The Rust CLI exposes `/skills` and direct `claw skills` discovery. Project and u
 
 ### Rust status
 
-The Rust CLI has a shared slash-command registry, local REPL/one-shot prompt flows, session resume, plugin/agent/skill management, model and permission controls, Git/GitHub helpers, and machine-readable output handling. JSON/NDJSON output no longer renders terminal spinners or streamed tool UI before the machine payload.
+The Rust CLI has a shared slash-command registry, local REPL/one-shot prompt flows, session resume, plugin/agent/skill management, model and permission controls, Git/GitHub helpers, and machine-readable JSON output handling. Terminal spinners and streamed tool UI are suppressed in JSON mode.
 
 ### Remaining gaps
 
-- Dedicated command families such as `/hooks`, `/mcp`, `/plan`, `/review`, `/tasks`, and other TypeScript commands
+- First-class interactive `/mcp`, `/plan`, `/review`, `/tasks`, and other TypeScript command families
 - TypeScript-style handler decomposition across the full CLI
 - Rich remote/structured transport layers equivalent to `structuredIO`, `remoteIO`, and transport-specific handlers
 - Full machine-readable event/stream contract parity across all execution modes
@@ -119,7 +119,7 @@ The Rust CLI has a shared slash-command registry, local REPL/one-shot prompt flo
 
 ### Rust status
 
-The Rust runtime has a live multi-iteration tool loop, session persistence, permission enforcement, hook-aware tool execution, MCP/plugin tool integration, agent lifecycle coordination, and CLI event rendering. Machine-readable terminal noise has been explicitly suppressed.
+The Rust runtime has a live multi-iteration tool loop, session persistence, permission enforcement, hook-aware tool execution, MCP/plugin tool integration, agent lifecycle coordination, and CLI event rendering.
 
 ### Remaining gaps
 
@@ -135,15 +135,15 @@ The Rust runtime has a live multi-iteration tool loop, session persistence, perm
 
 ### Rust status
 
-Core provider APIs, OAuth, usage accounting, MCP bootstrap/client support, remote upstream proxying, and MCP result normalization are implemented. Discovered MCP tools are wired into the live registry.
+Core provider APIs, OAuth, usage accounting, MCP bootstrap/client support, remote upstream proxying, and MCP result normalization are implemented. Discovered MCP tools are wired into the live registry. The new MCP inspector binary exposes configured server inventory without opening connections.
 
 ### Remaining gaps
 
 - Broader service ecosystem found in TypeScript: analytics, prompt suggestion, session/team memory, settings sync, policy limits, notifier, voice, and related services
-- Richer MCP connection-manager/UI behavior
+- Richer interactive MCP connection-manager/UI behavior
 - Provider/model ergonomics and service abstractions remain thinner than TypeScript
 
-**Status:** core service foundation is solid; broader ecosystem parity is still missing.
+**Status:** core service foundation is solid; interactive MCP UX and broader ecosystem parity remain missing.
 
 ---
 
@@ -158,10 +158,12 @@ Core provider APIs, OAuth, usage accounting, MCP bootstrap/client support, remot
 - **Phase 8B:** surfaced runtime status in the local web UI.
 - **Phase 8C:** verified plugin JSON input propagation through the existing environment contract.
 - **Phase 8D:** suppressed terminal spinners and streamed tool UI in machine-readable CLI output modes.
+- **Phase 9A:** added first-class `/hooks` command discovery and inspection routing.
+- **Phase 9B:** added local `/hooks add` and `/hooks remove` persistence while preserving merged runtime defaults.
 
 ## recommended next implementation targets
 
-1. Add a first-class `/hooks` command/inspection surface around the now-live hook runtime.
-2. Expand structured/remote assistant transport semantics beyond local JSON/NDJSON prompt execution.
+1. Finish the MCP command family by wiring the inspector into the interactive `/mcp` slash-command registry.
+2. Expand structured/remote assistant transport semantics beyond the local JSON prompt path.
 3. Add the next missing TypeScript command family only after its underlying runtime capability is represented in Rust.
 4. Continue closing the service and tool-family gaps with focused, independently testable slices.

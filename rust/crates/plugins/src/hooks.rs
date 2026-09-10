@@ -332,7 +332,11 @@ impl CommandWithStdin {
         let mut child = self.command.spawn()?;
         if let Some(mut child_stdin) = child.stdin.take() {
             use std::io::Write as _;
-            child_stdin.write_all(stdin)?;
+            if let Err(error) = child_stdin.write_all(stdin) {
+                if error.kind() != std::io::ErrorKind::BrokenPipe {
+                    return Err(error);
+                }
+            }
         }
 
         let started = Instant::now();
@@ -343,7 +347,12 @@ impl CommandWithStdin {
 
             if started.elapsed() >= Duration::from_millis(timeout) {
                 let _ = child.kill();
-                let output = child.wait_with_output()?;
+                let status = child.wait()?;
+                let output = std::process::Output {
+                    status,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                };
                 return Ok(CommandOutput::TimedOut { output, timeout });
             }
 

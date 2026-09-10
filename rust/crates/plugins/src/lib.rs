@@ -313,7 +313,7 @@ impl PluginTool {
         }
 
         let mut child = process.spawn()?;
-        if let Some(stdin) = child.stdin.as_mut() {
+        if let Some(mut stdin) = child.stdin.take() {
             use std::io::Write as _;
             stdin.write_all(input_json.as_bytes())?;
         }
@@ -366,8 +366,7 @@ fn plugin_tool_timeout() -> Duration {
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .map(|value| value.clamp(100, 60_000))
-        .map(Duration::from_millis)
-        .unwrap_or_else(|| Duration::from_secs(10))
+        .map_or_else(|| Duration::from_secs(10), Duration::from_millis)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

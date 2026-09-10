@@ -117,7 +117,10 @@ fn records_denied_tool_results_when_prompt_rejects() {
 fn permission_denial_short_circuits_pre_tool_hook_and_tool() {
     struct Api;
     impl ApiClient for Api {
-        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+        fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            if request.messages.iter().any(|m| m.role == MessageRole::Tool) {
+                return Ok(vec![AssistantEvent::TextDelta("denied".to_string()), AssistantEvent::MessageStop]);
+            }
             Ok(vec![AssistantEvent::ToolUse { id: "tool-1".to_string(), name: "blocked".to_string(), input: "secret".to_string() }, AssistantEvent::MessageStop])
         }
     }
@@ -133,7 +136,7 @@ fn permission_denial_short_circuits_pre_tool_hook_and_tool() {
     assert!(*is_error);
     assert!(output.contains("requires workspace-write permission"));
     assert!(!output.contains("hook denial"));
-    assert_eq!(runtime.session().messages.len(), 3);
+    assert_eq!(runtime.session().messages.len(), 4);
 }
 
 #[test]
