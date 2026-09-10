@@ -102,8 +102,8 @@ pub fn render_mcp_report(
     commands.write_text(text.replace(marker, renderer + marker))
 replace_once(
     "rust/crates/commands/src/lib.rs",
-    '    fn parses_resume_and_config_slash_commands() {',
-    '    fn parses_mcp_slash_command() {\n        assert_eq!(SlashCommand::parse("/mcp"), Some(SlashCommand::Mcp));\n        assert!(slash_command_specs().iter().any(|spec| spec.name == "mcp"));\n    }\n\n    #[test]\n    fn parses_resume_and_config_slash_commands() {',
+    '    #[test]\n    fn parses_resume_and_config_slash_commands() {',
+    '    #[test]\n    fn parses_mcp_slash_command() {\n        assert_eq!(SlashCommand::parse("/mcp"), Some(SlashCommand::Mcp));\n        assert!(slash_command_specs().iter().any(|spec| spec.name == "mcp"));\n    }\n\n    #[test]\n    fn parses_resume_and_config_slash_commands() {',
 )
 
 # claw-cli: dispatch the shared command and expose the report in the live REPL.
@@ -129,13 +129,8 @@ replace_once(
 )
 replace_once(
     "rust/crates/claw-cli/src/main.rs",
-    '        SlashCommand::Bughunter { .. }\n        | SlashCommand::Branch { .. }',
-    '        SlashCommand::Bughunter { .. }\n        | SlashCommand::Branch { .. }',
-)
-replace_once(
-    "rust/crates/claw-cli/src/main.rs",
-    '    fn parses_direct_agents_and_skills_slash_commands() {',
-    '    fn parses_mcp_as_interactive_command() {\n        assert_eq!(\n            super::SlashCommand::parse("/mcp"),\n            Some(super::SlashCommand::Mcp)\n        );\n    }\n\n    #[test]\n    fn parses_direct_agents_and_skills_slash_commands() {',
+    '    #[test]\n    fn parses_direct_agents_and_skills_slash_commands() {',
+    '    #[test]\n    fn parses_mcp_as_interactive_command() {\n        assert_eq!(\n            super::SlashCommand::parse("/mcp"),\n            Some(super::SlashCommand::Mcp)\n        );\n    }\n\n    #[test]\n    fn parses_direct_agents_and_skills_slash_commands() {',
 )
 
 # Keep the standalone binary as a thin wrapper over the shared report implementation.
@@ -159,4 +154,3 @@ text = text.replace(
     "1. Expand `/mcp` beyond inspection into connection lifecycle and richer interactive MCP management.",
 )
 parity.write_text(text)
-PY
