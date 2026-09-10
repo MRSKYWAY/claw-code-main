@@ -74,7 +74,7 @@ const NVIDIA: ProviderMetadata = ProviderMetadata {
 pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
     ModelCatalogEntry {
         alias: "gemini-flash",
-        model: "gemini-3.7-flash",
+        model: "gemini-3.8-flash",
         label: "Gemini · Flash",
         metadata: GEMINI,
         capabilities: ModelCapabilities { max_output_tokens: 65_536, supports_tools: true, supports_streaming: true, supports_reasoning: true },
@@ -88,28 +88,28 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
     },
     ModelCatalogEntry {
         alias: "nvidia-fast",
-        model: "deepseek-ai/deepseek-v4-flash",
+        model: "deepseek-ai/deepseek-v4-flash-0731",
         label: "NVIDIA · Fast",
         metadata: NVIDIA,
         capabilities: ModelCapabilities { max_output_tokens: 16_384, supports_tools: true, supports_streaming: true, supports_reasoning: true },
     },
     ModelCatalogEntry {
         alias: "nvidia-plan",
-        model: "nvidia/nemotron-3-super-120b-a12b",
+        model: "moonshotai/kimi-k3",
         label: "NVIDIA · Planner",
         metadata: NVIDIA,
-        capabilities: ModelCapabilities { max_output_tokens: 32_768, supports_tools: true, supports_streaming: true, supports_reasoning: true },
+        capabilities: ModelCapabilities { max_output_tokens: 16_384, supports_tools: true, supports_streaming: true, supports_reasoning: true },
     },
     ModelCatalogEntry {
         alias: "nvidia-agent",
-        model: "z-ai/glm-5.2",
+        model: "deepseek-ai/deepseek-v4-pro-0813",
         label: "NVIDIA · Agent",
         metadata: NVIDIA,
-        capabilities: ModelCapabilities { max_output_tokens: 32_768, supports_tools: true, supports_streaming: true, supports_reasoning: true },
+        capabilities: ModelCapabilities { max_output_tokens: 16_384, supports_tools: true, supports_streaming: true, supports_reasoning: true },
     },
     ModelCatalogEntry {
         alias: "nvidia-long",
-        model: "deepseek-ai/deepseek-v4-pro",
+        model: "deepseek-ai/deepseek-v4-pro-0813",
         label: "NVIDIA · Long context",
         metadata: NVIDIA,
         capabilities: ModelCapabilities { max_output_tokens: 16_384, supports_tools: true, supports_streaming: true, supports_reasoning: true },
@@ -182,7 +182,7 @@ pub fn max_tokens_for_model(model: &str) -> u32 {
 }
 
 fn is_nvidia_model(model: &str) -> bool {
-    ["deepseek-ai/", "z-ai/", "nvidia/", "stepfun-ai/", "minimaxai/"]
+    ["deepseek-ai/", "z-ai/", "nvidia/", "stepfun-ai/", "minimaxai/", "moonshotai/"]
         .iter()
         .any(|prefix| model.starts_with(prefix))
 }
@@ -210,26 +210,27 @@ mod tests {
 
     #[test]
     fn resolves_gemini_and_nvidia_aliases() {
-        assert_eq!(resolve_model_alias("gemini-flash"), "gemini-3.7-flash");
+        assert_eq!(resolve_model_alias("gemini-flash"), "gemini-3.8-flash");
         assert_eq!(resolve_model_alias("gemini-pro"), "gemini-3.1-pro-preview");
-        assert_eq!(resolve_model_alias("nvidia-fast"), "deepseek-ai/deepseek-v4-flash");
-        assert_eq!(resolve_model_alias("nvidia-agent"), "z-ai/glm-5.2");
+        assert_eq!(resolve_model_alias("nvidia-fast"), "deepseek-ai/deepseek-v4-flash-0731");
+        assert_eq!(resolve_model_alias("nvidia-agent"), "deepseek-ai/deepseek-v4-pro-0813");
+        assert_eq!(resolve_model_alias("nvidia-plan"), "moonshotai/kimi-k3");
     }
 
     #[test]
     fn detects_provider_from_model_name_first() {
         assert_eq!(detect_provider_kind("gemini-flash"), ProviderKind::Gemini);
         assert_eq!(detect_provider_kind("nvidia-fast"), ProviderKind::Nvidia);
-        assert_eq!(detect_provider_kind("deepseek-ai/deepseek-v4-pro"), ProviderKind::Nvidia);
-        assert_eq!(detect_provider_kind("z-ai/glm-5.2"), ProviderKind::Nvidia);
+        assert_eq!(detect_provider_kind("deepseek-ai/deepseek-v4-pro-0813"), ProviderKind::Nvidia);
+        assert_eq!(detect_provider_kind("moonshotai/kimi-k3"), ProviderKind::Nvidia);
     }
 
     #[test]
     fn uses_model_specific_output_limits() {
         assert_eq!(max_tokens_for_model("gemini-flash"), 65_536);
         assert_eq!(max_tokens_for_model("nvidia-fast"), 16_384);
-        assert_eq!(max_tokens_for_model("nvidia-plan"), 32_768);
-        assert_eq!(max_tokens_for_model("nvidia-agent"), 32_768);
+        assert_eq!(max_tokens_for_model("nvidia-plan"), 16_384);
+        assert_eq!(max_tokens_for_model("nvidia-agent"), 16_384);
         assert_eq!(max_tokens_for_model("nvidia-long"), 16_384);
     }
 
