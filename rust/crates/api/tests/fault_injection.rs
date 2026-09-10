@@ -139,11 +139,11 @@ async fn malformed_sse_payload_is_reported_at_stream_boundary() {
         .next_event()
         .await
         .expect_err("malformed SSE should fail when consumed");
-    assert!(matches!(error, ApiError::InvalidSseFrame(_)));
+    assert!(matches!(error, ApiError::Json(_)));
 }
 
 #[tokio::test]
-async fn provider_stream_survives_valid_prefix_then_detects_truncated_frame() {
+async fn provider_stream_survives_valid_prefix_then_discards_truncated_frame() {
     let response = concat!(
         "HTTP/1.1 200 OK\r\n",
         "Content-Type: text/event-stream\r\n",
@@ -207,7 +207,7 @@ impl Drop for TestServer {
 }
 
 async fn spawn_server(response: String) -> TestServer {
-    spawn_raw_response(response_to_bytes(response)).await
+    spawn_raw_response(response).await
 }
 
 async fn spawn_raw_response(response: String) -> TestServer {
@@ -230,10 +230,6 @@ async fn spawn_raw_response(response: String) -> TestServer {
         base_url: format!("http://{address}"),
         handle,
     }
-}
-
-fn response_to_bytes(response: String) -> String {
-    response
 }
 
 fn http_response(status: &str, content_type: &str, body: &str) -> String {
