@@ -51,12 +51,12 @@ jobs:
         run: cargo build --release
 
   phase-10d-fix:
-    if: (github.event_name == 'pull_request_target' || github.event_name == 'pull_request') && github.event.pull_request.head.ref == 'phase-10d-task-inspection' && github.actor != 'github-actions[bot]'
+    if: github.event_name == 'push' && github.ref_name == 'main' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Check out branch
+      - name: Check out Phase 10D branch
         uses: actions/checkout@v4
         with:
           ref: phase-10d-task-inspection
