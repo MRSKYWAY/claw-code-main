@@ -16,45 +16,47 @@ jobs:
         with:
           ref: phase-10d-task-inspection
           fetch-depth: 0
-      - name: Apply exact fixes
+      - name: Apply phase 10D fixes
         run: |
           python3 - <<'PY'
           from pathlib import Path
           p = Path('rust/crates/commands/src/lib.rs')
           s = p.read_text()
-          old = '        assert_eq!(slash_command_specs().len(), 30);'
-          new = '        assert_eq!(slash_command_specs().len(), 31);'
-          if s.count(old) != 1:
-              raise SystemExit(f'expected one help count match, found {s.count(old)}')
-          s = s.replace(old, new, 1)
-          old = '''        "  {:<24} {:<11} parent={parent}\\n    {}",
+          old = 'assert_eq!(slash_command_specs().len(), 30);'
+          assert old in s, 'help-count assertion not found'
+          s = s.replace(old, 'assert_eq!(slash_command_specs().len(), 31);', 1)
+          start = s.index('fn render_task_row(')
+          end = s.index('\nfn render_task_snapshot(', start)
+          new = '''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
+    let parent = snapshot.parent_id.as_deref().unwrap_or("-");
+    let result = snapshot
+        .result
+        .as_deref()
+        .map_or(String::new(), |value| format!("\\n    Result           {value}"));
+    let error = snapshot
+        .error
+        .as_deref()
+        .map_or(String::new(), |value| format!("\\n    Error            {value}"));
+    format!(
+        "  {:<24} {:<11} parent={parent}\\n    {}{result}{error}",
         snapshot.id,
         format_task_state(snapshot.state),
         snapshot.description,
-    )'''
-          new = '''        "  {:<24} {:<11} parent={parent}\\n    {}{}{}",
-        snapshot.id,
-        format_task_state(snapshot.state),
-        snapshot.description,
-        snapshot.result.as_deref().map_or(String::new(), |result| format!("\\n    Result           {result}")),
-        snapshot.error.as_deref().map_or(String::new(), |error| format!("\\n    Error            {error}")),
-    )'''
-          if s.count(old) != 1:
-              raise SystemExit(f'expected one task row match, found {s.count(old)}')
-          s = s.replace(old, new, 1)
+    )
+}'''
+          s = s[:start] + new + s[end:]
           p.write_text(s)
           PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add rust/crates/commands/src/lib.rs
           git diff --cached --check
-          git commit -m 'fix: align help count and task result rendering'
+          git commit -m 'fix: complete phase 10d task inspection assertions'
           git push origin phase-10d-task-inspection
       - name: Remove temporary workflow
         run: |
-          rm .github/workflows/phase-10d-test-fix3.yml
+          git rm .github/workflows/phase-10d-test-fix3.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .github/workflows/phase-10d-test-fix3.yml
           git commit -m 'chore: remove temporary Phase 10D test workflow'
           git push origin phase-10d-task-inspection
