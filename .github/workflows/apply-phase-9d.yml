@@ -16,7 +16,7 @@ jobs:
         with:
           ref: phase-9d-mcp-slash-command
       - name: Fix patch helper anchor
-        run: python3 -c 'from pathlib import Path; p=Path("phase-9d-patch.py"); t=p.read_text(); old="    fn parses_resume_and_config_slash_commands() {"; new="    #[test]\n    fn parses_resume_and_config_slash_commands() {"; assert old in t; p.write_text(t.replace(old,new,1))'
+        run: sed -i 's/    fn parses_resume_and_config_slash_commands/    #[test]\n    fn parses_resume_and_config_slash_commands/' phase-9d-patch.py
       - name: Apply patch helper
         run: python3 phase-9d-patch.py
       - name: Validate patch
