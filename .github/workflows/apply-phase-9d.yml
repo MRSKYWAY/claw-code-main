@@ -22,21 +22,32 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
           commands = Path("crates/commands/src/lib.rs")
           text = commands.read_text()
           old = "        | SlashCommand::Skills { .. }\n        | SlashCommand::Unknown(_) => None,"
           new = "        | SlashCommand::Skills { .. }\n        | SlashCommand::Mcp\n        | SlashCommand::Unknown(_) => None,"
           if old not in text:
               raise SystemExit("dispatcher match anchor not found")
+          text = text.replace(old, new, 1)
+          old = "        assert_eq!(slash_command_specs().len(), 29);"
+          new = "        assert_eq!(slash_command_specs().len(), 30);"
+          if old not in text:
+              raise SystemExit("command spec count anchor not found")
           commands.write_text(text.replace(old, new, 1))
 
           cli = Path("crates/claw-cli/src/main.rs")
           text = cli.read_text()
           old = '                "help", "status", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",\n                "version", "export", "agents", "skills",'
-          new = '                "help", "status", "mcp", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",\n                "version", "export", "agents", "skills",'
-          if old not in text:
-              raise SystemExit("CLI slash-command surface regression anchor not found")
-          cli.write_text(text.replace(old, new, 1))
+          new = '                "help", "status", "mcp", "hooks", "compact", "clear", "clear", "cost", "config", "memory", "init", "diff",\n                "version", "export", "agents", "skills",'
+          if old in text:
+              cli.write_text(text.replace(old, new.replace("clear", "clear", 1), 1))
+          else:
+              old = '                "help", "status", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",\n                "version", "export", "agents", "skills",'
+              new = '                "help", "status", "mcp", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",\n                "version", "export", "agents", "skills",'
+              if old not in text:
+                  raise SystemExit("CLI slash-command surface regression anchor not found")
+              cli.write_text(text.replace(old, new, 1))
       - name: Validate patch
         working-directory: rust
         run: |
@@ -47,8 +58,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm -f phase-9d-patch.py
-          git add PARITY.md rust/crates/commands/src/lib.rs rust/crates/commands/src/bin/mcp.rs rust/crates/claw-cli/src/main.rs phase-9d-patch.py
+          rm -f phase-9d-patch.py .github/workflows/apply-phase-9d.yml
+          git add PARITY.md rust/crates/commands/src/lib.rs rust/crates/commands/src/bin/mcp.rs rust/crates/claw-cli/src/main.rs phase-9d-patch.py .github/workflows/apply-phase-9d.yml
           git diff --cached --check
           git diff --cached --quiet && exit 0
           git commit -m "Phase 9D: wire interactive MCP slash command"
