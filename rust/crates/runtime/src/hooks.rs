@@ -353,7 +353,10 @@ impl CommandWithStdin {
 mod tests {
     use super::{hook_timeout, HookDecision, HookRunResult, HookRunner, MAX_HOOK_TIMEOUT_MS, MIN_HOOK_TIMEOUT_MS};
     use crate::config::{RuntimeFeatureConfig, RuntimeHookConfig};
+    use std::sync::Mutex;
     use std::time::Duration;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn allows_exit_code_zero_and_captures_stdout() {
@@ -394,6 +397,7 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn times_out_long_running_hooks() {
+        let _guard = ENV_LOCK.lock().expect("hook timeout env lock poisoned");
         std::env::set_var("CLAW_HOOK_TIMEOUT_MS", "100");
         let runner = HookRunner::new(RuntimeHookConfig::new(
             vec![shell_snippet("sleep 1")],
@@ -407,6 +411,7 @@ mod tests {
 
     #[test]
     fn timeout_configuration_has_safe_bounds() {
+        let _guard = ENV_LOCK.lock().expect("hook timeout env lock poisoned");
         std::env::set_var("CLAW_HOOK_TIMEOUT_MS", "1");
         assert_eq!(hook_timeout(), Duration::from_millis(MIN_HOOK_TIMEOUT_MS));
         std::env::set_var("CLAW_HOOK_TIMEOUT_MS", "999999");

@@ -944,14 +944,10 @@ pub fn render_tasks_report(
 
 fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
     let parent = snapshot.parent_id.as_deref().unwrap_or("-");
-    format!(
-        "  {:<24} {:<11} parent={parent}\n    {}",
-        snapshot.id,
-        format_task_state(snapshot.state),
-        snapshot.description,
-    )
+    let result = snapshot.result.as_deref().map_or(String::new(), |value| format!("\n    Result           {value}"));
+    let error = snapshot.error.as_deref().map_or(String::new(), |value| format!("\n    Error            {value}"));
+    format!("  {:<24} {:<11} parent={parent}\n    {}{result}{error}", snapshot.id, format_task_state(snapshot.state), snapshot.description)
 }
-
 fn render_task_snapshot(snapshot: &runtime::SubagentSnapshot) -> String {
     let mut lines = vec![
         "Task".to_string(),
@@ -2393,8 +2389,8 @@ mod tests {
         assert!(help.contains("aliases: /plugins, /marketplace"));
         assert!(help.contains("/agents"));
         assert!(help.contains("/skills"));
-        assert_eq!(slash_command_specs().len(), 30);
-        assert_eq!(resume_supported_slash_commands().len(), 15);
+        assert_eq!(slash_command_specs().len(), 31);
+        assert_eq!(resume_supported_slash_commands().len(), 16);
     }
 
     #[test]

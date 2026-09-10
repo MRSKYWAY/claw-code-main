@@ -15,7 +15,7 @@ use runtime::{
     edit_file, execute_bash, glob_search, grep_search, load_system_prompt, read_file, write_file,
     ApiClient, ApiRequest, AssistantEvent, BashCommandInput, ContentBlock, ConversationMessage,
     ConversationRuntime, GrepSearchInput, MessageRole, PermissionMode, PermissionPolicy,
-    RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,
+    CancellationToken, RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1700,16 +1700,33 @@ fn run_agent_job(job: &mut AgentJob) -> Result<(), String> {
         .subagent_type
         .as_deref()
         .unwrap_or("general-purpose");
+    let cancellation = runtime::global_subagent_registry()
+        .cancellation_token(&job.manifest.agent_id)
+        .map_err(|error| error.to_string())?;
     let result: Result<String, String> = (|| {
         let mut runtime = build_agent_runtime(job)?
             .with_max_iterations(max_iterations_for_subagent(subagent_type));
         let summary = runtime
-            .run_turn(job.prompt.clone(), None)
+            .run_turn_with_cancellation(job.prompt.clone(), None, &cancellation)
             .map_err(|error| error.to_string())?;
         Ok(final_assistant_text(&summary))
     })();
 
     match result {
+        Ok(_final_text) if cancellation.is_cancelled() => persist_agent_terminal_state(
+            &job.manifest,
+            &mut job.lifecycle,
+            AgentStatus::Cancelled,
+            None,
+            None,
+        ),
+        Err(_error) if cancellation.is_cancelled() => persist_agent_terminal_state(
+            &job.manifest,
+            &mut job.lifecycle,
+            AgentStatus::Cancelled,
+            None,
+            None,
+        ),
         Ok(final_text) => {
             persist_agent_terminal_state(
                 &job.manifest,
@@ -1984,8 +2001,8 @@ impl ProviderRuntimeClient {
     }
 }
 
-impl ApiClient for ProviderRuntimeClient {
-    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+impl ProviderRuntimeClient {
+    fn stream_internal(&mut self, request: ApiRequest, cancellation: Option<CancellationToken>) -> Result<Vec<AssistantEvent>, RuntimeError> {
         let tools = tool_specs_for_allowed_tools(Some(&self.allowed_tools))
             .into_iter()
             .map(|spec| ToolDefinition {
@@ -2005,20 +2022,28 @@ impl ApiClient for ProviderRuntimeClient {
         };
 
         self.runtime.block_on(async {
-            let mut stream = self
-                .client
-                .stream_message(&message_request)
-                .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?;
+            let stream_result = match cancellation.clone() {
+                Some(token) => tokio::select! {
+                    _ = wait_for_cancellation(token) => return Err(RuntimeError::new("conversation turn cancelled")),
+                    result = self.client.stream_message(&message_request) => result,
+                },
+                None => self.client.stream_message(&message_request).await,
+            };
+            let mut stream = stream_result.map_err(|error| RuntimeError::new(error.to_string()))?;
             let mut events = Vec::new();
             let mut pending_tools: BTreeMap<u32, (String, String, String)> = BTreeMap::new();
             let mut saw_stop = false;
 
-            while let Some(event) = stream
-                .next_event()
-                .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?
-            {
+            while let Some(event) = {
+                let next_result = match cancellation.clone() {
+                    Some(token) => tokio::select! {
+                        _ = wait_for_cancellation(token) => return Err(RuntimeError::new("conversation turn cancelled")),
+                        result = stream.next_event() => result,
+                    },
+                    None => stream.next_event().await,
+                };
+                next_result.map_err(|error| RuntimeError::new(error.to_string()))?
+            } {
                 match event {
                     ApiStreamEvent::MessageStart(start) => {
                         for block in start.message.content {
@@ -2084,16 +2109,36 @@ impl ApiClient for ProviderRuntimeClient {
                 return Ok(events);
             }
 
-            let response = self
-                .client
-                .send_message(&MessageRequest {
-                    stream: false,
-                    ..message_request.clone()
-                })
-                .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?;
+            let fallback_request = MessageRequest {
+                stream: false,
+                ..message_request.clone()
+            };
+            let response_result = match cancellation.clone() {
+                Some(token) => tokio::select! {
+                    _ = wait_for_cancellation(token) => return Err(RuntimeError::new("conversation turn cancelled")),
+                    result = self.client.send_message(&fallback_request) => result,
+                },
+                None => self.client.send_message(&fallback_request).await,
+            };
+            let response = response_result.map_err(|error| RuntimeError::new(error.to_string()))?;
             Ok(response_to_events(response))
         })
+    }
+}
+
+impl ApiClient for ProviderRuntimeClient {
+    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+        self.stream_internal(request, None)
+    }
+
+    fn stream_with_cancellation(&mut self, request: ApiRequest, cancellation: &CancellationToken) -> Result<Vec<AssistantEvent>, RuntimeError> {
+        self.stream_internal(request, Some(cancellation.clone()))
+    }
+}
+
+async fn wait_for_cancellation(token: CancellationToken) {
+    while !token.is_cancelled() {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
 }
 
