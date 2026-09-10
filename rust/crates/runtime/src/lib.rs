@@ -18,6 +18,7 @@ mod remote;
 pub mod retry;
 pub mod sandbox;
 mod session;
+mod subagent;
 mod usage;
 
 pub use bash::{execute_bash, BashCommandInput, BashCommandOutput};
@@ -87,6 +88,7 @@ pub use remote::{
 };
 pub use retry::{RetryDisposition, RetryPolicy};
 pub use session::{ContentBlock, ConversationMessage, MessageRole, Session, SessionError};
+pub use subagent::{SubagentError, SubagentHandle, SubagentRegistry, SubagentSnapshot, SubagentState};
 pub use usage::{
     format_usd, pricing_for_model, ModelPricing, TokenUsage, UsageCostEstimate, UsageTracker,
 };
