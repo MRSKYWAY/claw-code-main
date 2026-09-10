@@ -1,0 +1,138 @@
+name: Phase 10E bootstrap
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.pull_request.head.ref == 'phase-10e-direct-agent-cancellation'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-10e-direct-agent-cancellation
+          fetch-depth: 0
+      - name: Apply Phase 10E changes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          # Runtime cancellation-aware turn path.
+          p = Path('rust/crates/runtime/src/conversation.rs')
+          s = p.read_text()
+          s = s.replace('use crate::compact::{\n', 'use crate::cancellation::CancellationToken;\nuse crate::compact::{\n', 1)
+          old = '''pub trait ApiClient {\n    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError>;\n}'''
+          new = '''pub trait ApiClient {\n    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError>;\n\n    fn stream_with_cancellation(&mut self, request: ApiRequest, cancellation: &CancellationToken) -> Result<Vec<AssistantEvent>, RuntimeError> {\n        if cancellation.is_cancelled() {\n            return Err(RuntimeError::new("conversation turn cancelled"));\n        }\n        self.stream(request)\n    }\n}'''
+          if old not in s: raise SystemExit('ApiClient trait anchor not found')
+          s = s.replace(old, new, 1)
+          old = '''    pub fn run_turn(\n        &mut self,\n        user_input: impl Into<String>,\n        mut prompter: Option<&mut dyn PermissionPrompter>,\n    ) -> Result<TurnSummary, RuntimeError> {'''
+          new = '''    pub fn run_turn(\n        &mut self,\n        user_input: impl Into<String>,\n        prompter: Option<&mut dyn PermissionPrompter>,\n    ) -> Result<TurnSummary, RuntimeError> {\n        self.run_turn_with_cancellation(user_input, prompter, &CancellationToken::new())\n    }\n\n    pub fn run_turn_with_cancellation(\n        &mut self,\n        user_input: impl Into<String>,\n        mut prompter: Option<&mut dyn PermissionPrompter>,\n        cancellation: &CancellationToken,\n    ) -> Result<TurnSummary, RuntimeError> {'''
+          if old not in s: raise SystemExit('run_turn anchor not found')
+          s = s.replace(old, new, 1)
+          old = '''        self.session\n            .messages\n            .push(ConversationMessage::user_text(user_input.into()));'''
+          new = '''        if cancellation.is_cancelled() {\n            return Err(RuntimeError::new("conversation turn cancelled"));\n        }\n\n        self.session\n            .messages\n            .push(ConversationMessage::user_text(user_input.into()));'''
+          if old not in s: raise SystemExit('user anchor not found')
+          s = s.replace(old, new, 1)
+          old = '''            let request = ApiRequest {\n                system_prompt: self.system_prompt.clone(),\n                messages: self.session.messages.clone(),\n            };\n            let events = self.api_client.stream(request)?;'''
+          new = '''            if cancellation.is_cancelled() {\n                return Err(RuntimeError::new("conversation turn cancelled"));\n            }\n\n            let request = ApiRequest {\n                system_prompt: self.system_prompt.clone(),\n                messages: self.session.messages.clone(),\n            };\n            let events = self.api_client.stream_with_cancellation(request, cancellation)?;'''
+          if old not in s: raise SystemExit('provider call anchor not found')
+          s = s.replace(old, new, 1)
+          old = '''            for (tool_use_id, tool_name, input) in pending_tool_uses {\n                let permission_outcome'''
+          new = '''            for (tool_use_id, tool_name, input) in pending_tool_uses {\n                if cancellation.is_cancelled() {\n                    return Err(RuntimeError::new("conversation turn cancelled"));\n                }\n                let permission_outcome'''
+          if old not in s: raise SystemExit('tool loop anchor not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          # Registry-owned token accessor.
+          p = Path('rust/crates/runtime/src/subagent.rs')
+          s = p.read_text()
+          anchor = '''    pub fn snapshot(&self, id: &str) -> Result<Option<SubagentSnapshot>, SubagentError> {'''
+          insert = '''    pub fn cancellation_token(&self, id: &str) -> Result<CancellationToken, SubagentError> {\n        let records = self.inner.lock().map_err(|_| SubagentError::RegistryPoisoned)?;\n        records.get(id).map(|record| record.cancellation.clone()).ok_or_else(|| SubagentError::UnknownId(id.to_string()))\n    }\n\n'''
+          if anchor not in s: raise SystemExit('snapshot anchor not found')
+          s = s.replace(anchor, insert + anchor, 1)
+          p.write_text(s)
+
+          # External Agent + provider transport cancellation.
+          p = Path('rust/crates/tools/src/lib.rs')
+          s = p.read_text()
+          s = s.replace('    RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,\n', '    CancellationToken, RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,\n', 1)
+          old = '''    let result: Result<String, String> = (|| {\n        let mut runtime = build_agent_runtime(job)?\n            .with_max_iterations(max_iterations_for_subagent(subagent_type));\n        let summary = runtime\n            .run_turn(job.prompt.clone(), None)\n            .map_err(|error| error.to_string())?;\n        Ok(final_assistant_text(&summary))\n    })();\n\n    match result {\n        Ok(final_text) => {'''
+          new = '''    let cancellation = runtime::global_subagent_registry()\n        .cancellation_token(&job.manifest.agent_id)\n        .map_err(|error| error.to_string())?;\n    let result: Result<String, String> = (|| {\n        let mut runtime = build_agent_runtime(job)?\n            .with_max_iterations(max_iterations_for_subagent(subagent_type));\n        let summary = runtime\n            .run_turn_with_cancellation(job.prompt.clone(), None, &cancellation)\n            .map_err(|error| error.to_string())?;\n        Ok(final_assistant_text(&summary))\n    })();\n\n    match result {\n        Ok(_final_text) if cancellation.is_cancelled() => persist_agent_terminal_state(\n            &job.manifest,\n            &mut job.lifecycle,\n            AgentStatus::Cancelled,\n            None,\n            None,\n        ),\n        Err(_error) if cancellation.is_cancelled() => persist_agent_terminal_state(\n            &job.manifest,\n            &mut job.lifecycle,\n            AgentStatus::Cancelled,\n            None,\n            None,\n        ),\n        Ok(final_text) => {'''
+          if old not in s: raise SystemExit('run_agent_job anchor not found')
+          s = s.replace(old, new, 1)
+          old = '''impl ApiClient for ProviderRuntimeClient {\n    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {'''
+          new = '''impl ProviderRuntimeClient {\n    fn stream_internal(&mut self, request: ApiRequest, cancellation: Option<CancellationToken>) -> Result<Vec<AssistantEvent>, RuntimeError> {'''
+          if old not in s: raise SystemExit('provider impl anchor not found')
+          s = s.replace(old, new, 1)
+          old = '''            let mut stream = self\n                .client\n                .stream_message(&message_request)\n                .await\n                .map_err(|error| RuntimeError::new(error.to_string()))?;'''
+          new = '''            let stream_result = match cancellation.clone() {\n                Some(token) => tokio::select! {\n                    _ = wait_for_cancellation(token) => return Err(RuntimeError::new("conversation turn cancelled")),\n                    result = self.client.stream_message(&message_request) => result,\n                },\n                None => self.client.stream_message(&message_request).await,\n            };\n            let mut stream = stream_result.map_err(|error| RuntimeError::new(error.to_string()))?;'''
+          if old not in s: raise SystemExit('stream start anchor not found')
+          s = s.replace(old, new, 1)
+          old = '''            while let Some(event) = stream\n                .next_event()\n                .await\n                .map_err(|error| RuntimeError::new(error.to_string()))?\n            {'''
+          new = '''            while let Some(event) = {\n                let next_result = match cancellation.clone() {\n                    Some(token) => tokio::select! {\n                        _ = wait_for_cancellation(token) => return Err(RuntimeError::new("conversation turn cancelled")),\n                        result = stream.next_event() => result,\n                    },\n                    None => stream.next_event().await,\n                };\n                next_result.map_err(|error| RuntimeError::new(error.to_string()))?\n            } {'''
+          if old not in s: raise SystemExit('stream event anchor not found')
+          s = s.replace(old, new, 1)
+          old = '''            let response = self\n                .client\n                .send_message(&MessageRequest {\n                    stream: false,\n                    ..message_request.clone()\n                })\n                .await\n                .map_err(|error| RuntimeError::new(error.to_string()))?;'''
+          new = '''            let fallback_request = MessageRequest {\n                stream: false,\n                ..message_request.clone()\n            };\n            let response_result = match cancellation.clone() {\n                Some(token) => tokio::select! {\n                    _ = wait_for_cancellation(token) => return Err(RuntimeError::new("conversation turn cancelled")),\n                    result = self.client.send_message(&fallback_request) => result,\n                },\n                None => self.client.send_message(&fallback_request).await,\n            };\n            let response = response_result.map_err(|error| RuntimeError::new(error.to_string()))?;'''
+          if old not in s: raise SystemExit('fallback anchor not found')
+          s = s.replace(old, new, 1)
+          marker = '\nstruct SubagentToolExecutor {'
+          impl_text = '''\nimpl ApiClient for ProviderRuntimeClient {\n    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {\n        self.stream_internal(request, None)\n    }\n\n    fn stream_with_cancellation(&mut self, request: ApiRequest, cancellation: &CancellationToken) -> Result<Vec<AssistantEvent>, RuntimeError> {\n        self.stream_internal(request, Some(cancellation.clone()))\n    }\n}\n\nasync fn wait_for_cancellation(token: CancellationToken) {\n    while !token.is_cancelled() {\n        tokio::time::sleep(std::time::Duration::from_millis(25)).await;\n    }\n}\n'''
+          if marker not in s: raise SystemExit('executor marker not found')
+          s = s.replace(marker, impl_text + marker, 1)
+          p.write_text(s)
+
+          # Repair merged 10D stale tests + renderer.
+          p = Path('rust/crates/commands/src/lib.rs')
+          s = p.read_text()
+          s = s.replace('assert_eq!(slash_command_specs().len(), 30);', 'assert_eq!(slash_command_specs().len(), 31);', 1)
+          s = s.replace('assert_eq!(resume_supported_slash_commands().len(), 15);', 'assert_eq!(resume_supported_slash_commands().len(), 16);', 1)
+          start = s.index('fn render_task_row(')
+          end = s.index('\nfn render_task_snapshot(', start)
+          row = '''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {\n    let parent = snapshot.parent_id.as_deref().unwrap_or("-");\n    let result = snapshot.result.as_deref().map_or(String::new(), |value| format!("\\n    Result           {value}"));\n    let error = snapshot.error.as_deref().map_or(String::new(), |value| format!("\\n    Error            {value}"));\n    format!("  {:<24} {:<11} parent={parent}\\n    {}{result}{error}", snapshot.id, format_task_state(snapshot.state), snapshot.description)\n}'''
+          s = s[:start] + row + s[end:]
+          p.write_text(s)
+
+          p = Path('rust/crates/claw-cli/src/main.rs')
+          s = p.read_text()
+          s = s.replace('"version", "export", "agents", "skills",\n            ]', '"version", "export", "agents", "skills", "tasks",\n            ]', 1)
+          p.write_text(s)
+
+          # Fix process-wide hook timeout test environment races.
+          p = Path('rust/crates/runtime/src/hooks.rs')
+          s = p.read_text()
+          s = s.replace('    use std::time::Duration;\n', '    use std::sync::Mutex;\n    use std::time::Duration;\n\n    static ENV_LOCK: Mutex<()> = Mutex::new(());\n', 1)
+          s = s.replace('    fn times_out_long_running_hooks() {\n        std::env::set_var', '    fn times_out_long_running_hooks() {\n        let _guard = ENV_LOCK.lock().expect("hook timeout env lock poisoned");\n        std::env::set_var', 1)
+          s = s.replace('    fn timeout_configuration_has_safe_bounds() {\n        std::env::set_var', '    fn timeout_configuration_has_safe_bounds() {\n        let _guard = ENV_LOCK.lock().expect("hook timeout env lock poisoned");\n        std::env::set_var', 1)
+          p.write_text(s)
+
+          # Keep roadmap state aligned with the implemented boundary.
+          p = Path('PARITY.md')
+          s = p.read_text()
+          s = s.replace('2. Wire registry cancellation back into external Agent execution so provider work can terminate cooperatively.', '2. **Phase 10E — direct Agent cancellation:** wire registry cancellation back into external Agent execution so provider work can terminate cooperatively.\n3. Expand persistent background-task/session history and session-safe lookup.\n4. Expand structured/remote assistant transport semantics only after the subagent/task model is represented consistently across local execution modes.\n5. Return to richer MCP lifecycle and the broader TypeScript service/tool ecosystem after the subagent architecture is wired through the live dispatcher.', 1)
+          p.write_text(s)
+
+          Path('.github/workflows/phase-10e-bootstrap.yml').unlink()
+
+      - name: Verify
+        working-directory: rust
+        run: |
+          cargo test -p runtime --lib
+          cargo test -p commands --lib
+          cargo test -p claw-cli --bin claw
+          cargo clippy --workspace --lib --bins
+          cargo clippy -p commands --all-targets
+          cargo check --workspace
+
+      - name: Commit clean tree
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust/crates/runtime/src/conversation.rs rust/crates/runtime/src/subagent.rs rust/crates/tools/src/lib.rs rust/crates/commands/src/lib.rs rust/crates/claw-cli/src/main.rs rust/crates/runtime/src/hooks.rs PARITY.md .github/workflows
+          git commit -m "feat: make external Agent execution cancellable"
+          git push origin HEAD:phase-10e-direct-agent-cancellation
