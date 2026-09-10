@@ -17,19 +17,26 @@ jobs:
           ref: phase-9d-mcp-slash-command
       - name: Apply patch helper
         run: python3 phase-9d-patch.py
-      - name: Complete shared dispatcher match
+      - name: Complete shared MCP dispatch and regressions
         working-directory: rust
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path("crates/commands/src/lib.rs")
-          text = p.read_text()
+          commands = Path("crates/commands/src/lib.rs")
+          text = commands.read_text()
           old = "        | SlashCommand::Skills { .. }\n        | SlashCommand::Unknown(_) => None,"
           new = "        | SlashCommand::Skills { .. }\n        | SlashCommand::Mcp\n        | SlashCommand::Unknown(_) => None,"
           if old not in text:
               raise SystemExit("dispatcher match anchor not found")
-          p.write_text(text.replace(old, new, 1))
-          PY
+          commands.write_text(text.replace(old, new, 1))
+
+          cli = Path("crates/claw-cli/src/main.rs")
+          text = cli.read_text()
+          old = '                "help", "status", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",\n                "version", "export", "agents", "skills",'
+          new = '                "help", "status", "mcp", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",\n                "version", "export", "agents", "skills",'
+          if old not in text:
+              raise SystemExit("CLI slash-command surface regression anchor not found")
+          cli.write_text(text.replace(old, new, 1))
       - name: Validate patch
         working-directory: rust
         run: |
