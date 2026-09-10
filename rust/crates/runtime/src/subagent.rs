@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::task::JoinHandle;
 
+use crate::task_history::TaskHistory;
 use crate::CancellationToken;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,15 +51,58 @@ struct SubagentRecord {
     cancellation: CancellationToken,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SubagentRegistry {
     inner: Arc<Mutex<BTreeMap<String, SubagentRecord>>>,
+    history: Option<TaskHistory>,
+}
+
+impl Default for SubagentRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SubagentRegistry {
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            inner: Arc::new(Mutex::new(BTreeMap::new())),
+            history: None,
+        }
+    }
+
+    /// Build a registry that restores terminal task history and persists future lifecycle changes.
+    ///
+    /// Non-terminal records from an interrupted process are intentionally not restored as active
+    /// work: provider execution cannot survive a process restart, so showing those records as
+    /// running would be misleading.
+    #[must_use]
+    pub fn new_persistent(path: impl Into<PathBuf>) -> Self {
+        let history = TaskHistory::new(path);
+        let registry = Self {
+            inner: Arc::new(Mutex::new(BTreeMap::new())),
+            history: Some(history.clone()),
+        };
+
+        if let Ok(snapshots) = history.load() {
+            if let Ok(mut records) = registry.inner.lock() {
+                for snapshot in snapshots
+                    .into_iter()
+                    .filter(|snapshot| snapshot.state.is_terminal())
+                {
+                    records.insert(
+                        snapshot.id.clone(),
+                        SubagentRecord {
+                            snapshot,
+                            cancellation: CancellationToken::new(),
+                        },
+                    );
+                }
+            }
+        }
+
+        registry
     }
 
     pub fn spawn<F, Fut>(
@@ -158,48 +203,67 @@ impl SubagentRegistry {
     ) -> Result<SubagentSnapshot, SubagentError> {
         let id = id.into();
         let description = description.into();
-        let mut records = self
-            .inner
-            .lock()
-            .map_err(|_| SubagentError::RegistryPoisoned)?;
+        let snapshot = {
+            let mut records = self
+                .inner
+                .lock()
+                .map_err(|_| SubagentError::RegistryPoisoned)?;
 
-        if let Some(record) = records.get_mut(&id) {
-            if record.snapshot.state != state && !record.snapshot.state.can_transition_to(state) {
-                return Err(SubagentError::InvalidTransition {
-                    from: record.snapshot.state,
-                    to: state,
-                });
+            if let Some(record) = records.get_mut(&id) {
+                if record.snapshot.state.is_terminal() && state == SubagentState::Queued {
+                    record.snapshot = SubagentSnapshot {
+                        id: id.clone(),
+                        parent_id: parent_id.clone(),
+                        description: description.clone(),
+                        state,
+                        result: None,
+                        error: None,
+                    };
+                    record.cancellation = CancellationToken::new();
+                } else {
+                    if record.snapshot.state != state
+                        && !record.snapshot.state.can_transition_to(state)
+                    {
+                        return Err(SubagentError::InvalidTransition {
+                            from: record.snapshot.state,
+                            to: state,
+                        });
+                    }
+                    record.snapshot.state = state;
+                    if parent_id.is_some() || record.snapshot.parent_id.is_none() {
+                        record.snapshot.parent_id = parent_id;
+                    }
+                    record.snapshot.description = description;
+                    if result.is_some() {
+                        record.snapshot.result = result;
+                    }
+                    if error.is_some() {
+                        record.snapshot.error = error;
+                    }
+                }
+                record.snapshot.clone()
+            } else {
+                let cancellation = CancellationToken::new();
+                let snapshot = SubagentSnapshot {
+                    id: id.clone(),
+                    parent_id,
+                    description,
+                    state,
+                    result,
+                    error,
+                };
+                records.insert(
+                    id,
+                    SubagentRecord {
+                        snapshot: snapshot.clone(),
+                        cancellation,
+                    },
+                );
+                snapshot
             }
-            record.snapshot.state = state;
-            if parent_id.is_some() || record.snapshot.parent_id.is_none() {
-                record.snapshot.parent_id = parent_id;
-            }
-            record.snapshot.description = description;
-            if result.is_some() {
-                record.snapshot.result = result;
-            }
-            if error.is_some() {
-                record.snapshot.error = error;
-            }
-            return Ok(record.snapshot.clone());
-        }
-
-        let cancellation = CancellationToken::new();
-        let snapshot = SubagentSnapshot {
-            id: id.clone(),
-            parent_id,
-            description,
-            state,
-            result,
-            error,
         };
-        records.insert(
-            id,
-            SubagentRecord {
-                snapshot: snapshot.clone(),
-                cancellation,
-            },
-        );
+
+        self.persist()?;
         Ok(snapshot)
     }
 
@@ -230,6 +294,8 @@ impl SubagentRegistry {
             .ok_or_else(|| SubagentError::UnknownId(id.to_string()))?;
         if !snapshot.state.is_terminal() {
             self.transition(id, SubagentState::Cancelled)?;
+        } else {
+            self.persist()?;
         }
 
         for child_id in child_ids {
@@ -240,7 +306,10 @@ impl SubagentRegistry {
 
     pub fn cancellation_token(&self, id: &str) -> Result<CancellationToken, SubagentError> {
         let records = self.inner.lock().map_err(|_| SubagentError::RegistryPoisoned)?;
-        records.get(id).map(|record| record.cancellation.clone()).ok_or_else(|| SubagentError::UnknownId(id.to_string()))
+        records
+            .get(id)
+            .map(|record| record.cancellation.clone())
+            .ok_or_else(|| SubagentError::UnknownId(id.to_string()))
     }
 
     pub fn snapshot(&self, id: &str) -> Result<Option<SubagentSnapshot>, SubagentError> {
@@ -260,70 +329,87 @@ impl SubagentRegistry {
     }
 
     fn transition(&self, id: &str, next: SubagentState) -> Result<(), SubagentError> {
-        let mut records = self
-            .inner
-            .lock()
-            .map_err(|_| SubagentError::RegistryPoisoned)?;
-        let record = records
-            .get_mut(id)
-            .ok_or_else(|| SubagentError::UnknownId(id.to_string()))?;
-        if record.snapshot.state == next {
-            return Ok(());
+        {
+            let mut records = self
+                .inner
+                .lock()
+                .map_err(|_| SubagentError::RegistryPoisoned)?;
+            let record = records
+                .get_mut(id)
+                .ok_or_else(|| SubagentError::UnknownId(id.to_string()))?;
+            if record.snapshot.state == next {
+                return Ok(());
+            }
+            if !record.snapshot.state.can_transition_to(next) {
+                return Err(SubagentError::InvalidTransition {
+                    from: record.snapshot.state,
+                    to: next,
+                });
+            }
+            record.snapshot.state = next;
         }
-        if !record.snapshot.state.can_transition_to(next) {
-            return Err(SubagentError::InvalidTransition {
-                from: record.snapshot.state,
-                to: next,
-            });
-        }
-        record.snapshot.state = next;
-        Ok(())
+        self.persist()
     }
 
     fn complete(&self, id: &str, result: String) -> Result<(), SubagentError> {
-        let mut records = self
-            .inner
-            .lock()
-            .map_err(|_| SubagentError::RegistryPoisoned)?;
-        let record = records
-            .get_mut(id)
-            .ok_or_else(|| SubagentError::UnknownId(id.to_string()))?;
-        if record.snapshot.state != SubagentState::Running {
-            return Err(SubagentError::InvalidTransition {
-                from: record.snapshot.state,
-                to: SubagentState::Succeeded,
-            });
+        {
+            let mut records = self
+                .inner
+                .lock()
+                .map_err(|_| SubagentError::RegistryPoisoned)?;
+            let record = records
+                .get_mut(id)
+                .ok_or_else(|| SubagentError::UnknownId(id.to_string()))?;
+            if record.snapshot.state != SubagentState::Running {
+                return Err(SubagentError::InvalidTransition {
+                    from: record.snapshot.state,
+                    to: SubagentState::Succeeded,
+                });
+            }
+            record.snapshot.state = SubagentState::Succeeded;
+            record.snapshot.result = Some(result);
         }
-        record.snapshot.state = SubagentState::Succeeded;
-        record.snapshot.result = Some(result);
-        Ok(())
+        self.persist()
     }
 
     fn fail(&self, id: &str, error: String) -> Result<(), SubagentError> {
-        let mut records = self
-            .inner
-            .lock()
-            .map_err(|_| SubagentError::RegistryPoisoned)?;
-        let record = records
-            .get_mut(id)
-            .ok_or_else(|| SubagentError::UnknownId(id.to_string()))?;
-        if record.snapshot.state != SubagentState::Running {
-            return Err(SubagentError::InvalidTransition {
-                from: record.snapshot.state,
-                to: SubagentState::Failed,
-            });
+        {
+            let mut records = self
+                .inner
+                .lock()
+                .map_err(|_| SubagentError::RegistryPoisoned)?;
+            let record = records
+                .get_mut(id)
+                .ok_or_else(|| SubagentError::UnknownId(id.to_string()))?;
+            if record.snapshot.state != SubagentState::Running {
+                return Err(SubagentError::InvalidTransition {
+                    from: record.snapshot.state,
+                    to: SubagentState::Failed,
+                });
+            }
+            record.snapshot.state = SubagentState::Failed;
+            record.snapshot.error = Some(error);
         }
-        record.snapshot.state = SubagentState::Failed;
-        record.snapshot.error = Some(error);
-        Ok(())
+        self.persist()
+    }
+
+    fn persist(&self) -> Result<(), SubagentError> {
+        let Some(history) = &self.history else {
+            return Ok(());
+        };
+        let snapshots = self.snapshots()?;
+        history
+            .save(&snapshots)
+            .map_err(|error| SubagentError::History(error.to_string()))
     }
 }
 
 /// Process-wide registry used by dispatcher-owned agents that cannot transfer execution
-/// directly into [`SubagentRegistry::spawn`].
+/// directly into [`SubagentRegistry::spawn`]. Its task history is kept in the project-local
+/// `.claw/tasks.json` journal so `/tasks` remains useful across CLI restarts.
 pub fn global_subagent_registry() -> &'static SubagentRegistry {
     static REGISTRY: OnceLock<SubagentRegistry> = OnceLock::new();
-    REGISTRY.get_or_init(SubagentRegistry::new)
+    REGISTRY.get_or_init(|| SubagentRegistry::new_persistent(PathBuf::from(".claw/tasks.json")))
 }
 
 pub struct SubagentHandle {
@@ -371,6 +457,7 @@ pub enum SubagentError {
         from: SubagentState,
         to: SubagentState,
     },
+    History(String),
     Join(String),
 }
 
@@ -383,6 +470,7 @@ impl fmt::Display for SubagentError {
             Self::InvalidTransition { from, to } => {
                 write!(formatter, "invalid sub-agent state transition: {from:?} -> {to:?}")
             }
+            Self::History(error) => write!(formatter, "sub-agent task history failed: {error}"),
             Self::Join(error) => write!(formatter, "sub-agent task join failed: {error}"),
         }
     }
@@ -393,8 +481,17 @@ impl std::error::Error for SubagentError {}
 #[cfg(test)]
 mod tests {
     use super::{SubagentRegistry, SubagentState};
+    use std::fs;
     use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    fn temp_history_path(label: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("claw-subagent-{label}-{nanos}.json"))
+    }
 
     #[tokio::test]
     async fn spawn_tracks_parent_result_and_terminal_state() {
@@ -593,5 +690,31 @@ mod tests {
         });
         assert!(matches!(second, Err(super::SubagentError::DuplicateId(id)) if id == "same"));
         let _ = first.expect("first spawn").join().await.expect("first join");
+    }
+
+    #[test]
+    fn persistent_registry_restores_terminal_history() {
+        let path = temp_history_path("restore");
+        let first = SubagentRegistry::new_persistent(&path);
+        first
+            .sync_external(
+                "persisted",
+                Some("parent".to_string()),
+                "historical task",
+                SubagentState::Succeeded,
+                Some("done".to_string()),
+                None,
+            )
+            .expect("history should persist");
+        drop(first);
+
+        let restored = SubagentRegistry::new_persistent(&path);
+        let snapshot = restored
+            .snapshot("persisted")
+            .expect("snapshot")
+            .expect("restored task");
+        assert_eq!(snapshot.state, SubagentState::Succeeded);
+        assert_eq!(snapshot.result.as_deref(), Some("done"));
+        fs::remove_file(path).expect("history file should be removable");
     }
 }
