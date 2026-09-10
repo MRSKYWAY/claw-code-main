@@ -1,0 +1,77 @@
+name: Phase 10D final repair
+
+on:
+  push:
+    branches:
+      - phase-10d-clean
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Phase 10D branch
+        uses: actions/checkout@v4
+        with:
+          ref: phase-10d-clean
+          fetch-depth: 0
+
+      - name: Apply one-line test fix and clean temporary workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('rust/crates/claw-cli/src/main.rs')
+          s = p.read_text()
+          old = '"version", "export", "agents", "skills",\n            ]'
+          new = '"version", "export", "agents", "skills", "tasks",\n            ]'
+          if old not in s:
+              raise SystemExit('expected stale resume command list was not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('rust/crates/commands/src/lib.rs')
+          s = p.read_text()
+          if 'assert_eq!(slash_command_specs().len(), 30);' in s:
+              s = s.replace('assert_eq!(slash_command_specs().len(), 30);', 'assert_eq!(slash_command_specs().len(), 31);', 1)
+          if 'assert_eq!(resume_supported_slash_commands().len(), 15);' in s:
+              s = s.replace('assert_eq!(resume_supported_slash_commands().len(), 15);', 'assert_eq!(resume_supported_slash_commands().len(), 16);', 1)
+          p.write_text(s)
+          PY
+
+          rm -f \
+            .github/workflows/p10d-finalize.yml \
+            .github/workflows/phase-10d-fix.yml \
+            .github/workflows/phase-10d-fix2.yml \
+            .github/workflows/phase-10d-one-shot.yml \
+            .github/workflows/phase-10d-pr-repair.yml \
+            .github/workflows/phase-10d-main-repair.yml
+          git rm -f .github/workflows/p10d-finalize.yml \
+            .github/workflows/phase-10d-fix.yml \
+            .github/workflows/phase-10d-fix2.yml \
+            .github/workflows/phase-10d-one-shot.yml \
+            .github/workflows/phase-10d-pr-repair.yml \
+            .github/workflows/phase-10d-main-repair.yml 2>/dev/null || true
+
+      - name: Verify targeted tests
+        working-directory: rust
+        run: cargo test -p claw-cli --bin claw resume_supported_command_list_matches_expected_surface
+
+      - name: Verify full workspace tests
+        working-directory: rust
+        run: cargo test --workspace --exclude tools
+
+      - name: Commit clean Phase 10D tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/p10d-final-repair.yml
+          git add rust/crates/claw-cli/src/main.rs rust/crates/commands/src/lib.rs .github/workflows/ci.yml .github/workflows
+          git commit -m "fix: finish Phase 10D test surface"
+          git push origin HEAD:phase-10d-clean
