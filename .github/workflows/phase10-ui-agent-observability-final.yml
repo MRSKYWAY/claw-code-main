@@ -1,8 +1,8 @@
 name: Phase 10 UI agent observability refinement
 
 on:
-  push:
-    branches: [phase-10-ui-agent-observability-final]
+  pull_request:
+    types: [opened, synchronize]
 
 permissions:
   contents: write
@@ -80,7 +80,6 @@ jobs:
       const agents = data.agents || [];
       const active = agents.filter(agent => agent.status === 'queued' || agent.status === 'running');
       const history = agents.filter(agent => agent.status !== 'queued' && agent.status !== 'running');
-
       const activeLabel = document.createElement('div');
       activeLabel.className = 'agent-group-label';
       activeLabel.textContent = `Active · ${active.length}`;
@@ -102,7 +101,6 @@ jobs:
           root.append(node);
         });
       }
-
       if (history.length) {
         const details = document.createElement('details');
         details.className = 'agent-history';
