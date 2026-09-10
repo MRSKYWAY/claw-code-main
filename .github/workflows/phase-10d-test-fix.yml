@@ -1,0 +1,36 @@
+name: Phase 10D test fix
+
+on:
+  push:
+    branches: [phase-10d-task-inspection]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-10d-task-inspection
+          fetch-depth: 0
+      - name: Update expected resume command surface
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('rust/crates/claw-cli/src/main.rs')
+          s = p.read_text()
+          old = '                "version", "export", "agents", "skills",\n'
+          new = '                "version", "export", "agents", "skills", "tasks",\n'
+          if s.count(old) != 1:
+              raise SystemExit(f'expected exactly one match, found {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/claw-cli/src/main.rs
+          git diff --cached --check
+          git commit -m 'test: include tasks in resume command surface'
+          git push origin phase-10d-task-inspection
