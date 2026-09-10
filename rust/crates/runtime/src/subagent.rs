@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::task::JoinHandle;
 
@@ -146,6 +146,65 @@ impl SubagentRegistry {
         })
     }
 
+    /// Synchronize lifecycle information for work owned by an external dispatcher.
+    ///
+    /// External agents do not use [`SubagentRegistry::spawn`], so this method creates or
+    /// advances the registry record from the dispatcher's persisted lifecycle state while
+    /// preserving the registry's transition invariants.
+    pub fn sync_external(
+        &self,
+        id: impl Into<String>,
+        parent_id: Option<String>,
+        description: impl Into<String>,
+        state: SubagentState,
+        result: Option<String>,
+        error: Option<String>,
+    ) -> Result<SubagentSnapshot, SubagentError> {
+        let id = id.into();
+        let description = description.into();
+        let mut records = self
+            .inner
+            .lock()
+            .map_err(|_| SubagentError::RegistryPoisoned)?;
+
+        if let Some(record) = records.get_mut(&id) {
+            if record.snapshot.state != state && !record.snapshot.state.can_transition_to(state) {
+                return Err(SubagentError::InvalidTransition {
+                    from: record.snapshot.state,
+                    to: state,
+                });
+            }
+            record.snapshot.state = state;
+            record.snapshot.parent_id = parent_id;
+            record.snapshot.description = description;
+            if result.is_some() {
+                record.snapshot.result = result;
+            }
+            if error.is_some() {
+                record.snapshot.error = error;
+            }
+            return Ok(record.snapshot.clone());
+        }
+
+        let cancellation = CancellationToken::new();
+        let snapshot = SubagentSnapshot {
+            id: id.clone(),
+            parent_id,
+            description,
+            state,
+            result,
+            error,
+        };
+        records.insert(
+            id,
+            SubagentRecord {
+                snapshot: snapshot.clone(),
+                cancellation,
+            },
+        );
+        Ok(snapshot)
+    }
+
     pub fn cancel(&self, id: &str) -> Result<bool, SubagentError> {
         let records = self
             .inner
@@ -242,6 +301,13 @@ impl SubagentRegistry {
     }
 }
 
+/// Process-wide registry used by dispatcher-owned agents that cannot transfer execution
+/// directly into [`SubagentRegistry::spawn`].
+pub fn global_subagent_registry() -> &'static SubagentRegistry {
+    static REGISTRY: OnceLock<SubagentRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(SubagentRegistry::new)
+}
+
 pub struct SubagentHandle {
     id: String,
     registry: SubagentRegistry,
@@ -329,6 +395,80 @@ mod tests {
         let completed = handle.join().await.expect("join should succeed");
         assert_eq!(completed.state, SubagentState::Succeeded);
         assert_eq!(completed.result.as_deref(), Some("done"));
+    }
+
+    #[test]
+    fn external_sync_tracks_lifecycle_without_duplicate_records() {
+        let registry = SubagentRegistry::new();
+        let queued = registry
+            .sync_external(
+                "agent-1",
+                None,
+                "live agent",
+                SubagentState::Queued,
+                None,
+                None,
+            )
+            .expect("queued sync should succeed");
+        assert_eq!(queued.state, SubagentState::Queued);
+
+        let running = registry
+            .sync_external(
+                "agent-1",
+                None,
+                "live agent",
+                SubagentState::Running,
+                None,
+                None,
+            )
+            .expect("running sync should succeed");
+        assert_eq!(running.state, SubagentState::Running);
+
+        let completed = registry
+            .sync_external(
+                "agent-1",
+                None,
+                "live agent",
+                SubagentState::Succeeded,
+                Some("finished".to_string()),
+                None,
+            )
+            .expect("completion sync should succeed");
+        assert_eq!(completed.state, SubagentState::Succeeded);
+        assert_eq!(completed.result.as_deref(), Some("finished"));
+        assert_eq!(registry.snapshots().expect("snapshots").len(), 1);
+    }
+
+    #[test]
+    fn external_sync_rejects_invalid_backward_transition() {
+        let registry = SubagentRegistry::new();
+        registry
+            .sync_external(
+                "agent-2",
+                None,
+                "live agent",
+                SubagentState::Running,
+                None,
+                None,
+            )
+            .expect("running sync should succeed");
+        let error = registry
+            .sync_external(
+                "agent-2",
+                None,
+                "live agent",
+                SubagentState::Queued,
+                None,
+                None,
+            )
+            .expect_err("backward transition should fail");
+        assert!(matches!(
+            error,
+            super::SubagentError::InvalidTransition {
+                from: SubagentState::Running,
+                to: SubagentState::Queued,
+            }
+        ));
     }
 
     #[tokio::test]

@@ -29,7 +29,6 @@ The project is still **not feature-parity** with the TypeScript CLI. The highest
 
 ### Remaining major gaps
 
-- Live Agent dispatcher is not yet backed by the runtime subagent registry
 - Rich parent/child context propagation, result handoff, and cancellation semantics across nested agents
 - Task listing/querying and persistent background-task/session history integration
 - Broader TypeScript tool families and workflow/system tools
@@ -51,7 +50,7 @@ The Rust tool registry is centralized and now includes built-ins plus plugin- an
 
 The major TypeScript families still without dedicated Rust equivalents include user-interaction, LSP-driven workflows, several MCP utility commands, remote triggers, scheduling, task/team workflows, and the larger set of workflow/system tools.
 
-**Status:** broad local tool foundation; subagent dispatch remains ready for deeper runtime orchestration integration.
+**Status:** broad local tool foundation; live Agent lifecycle is synchronized into the runtime subagent registry.
 
 ---
 
@@ -125,17 +124,17 @@ The Rust CLI has a shared slash-command registry, local REPL/one-shot prompt flo
 
 ### Rust status
 
-The Rust runtime has a live multi-iteration tool loop, session persistence, permission enforcement, hook-aware tool execution, MCP/plugin tool integration, agent lifecycle coordination, and CLI event rendering. Phase 10A now adds a runtime-owned `SubagentRegistry` that tracks parent/child relationships, queued/running/terminal state, cooperative cancellation, and captured results/errors.
+The Rust runtime has a live multi-iteration tool loop, session persistence, permission enforcement, hook-aware tool execution, MCP/plugin tool integration, agent lifecycle coordination, and CLI event rendering. Phase 10A now adds a runtime-owned `SubagentRegistry` that tracks parent/child relationships, queued/running/terminal state, cooperative cancellation, and captured results/errors. Phase 10B synchronizes live Agent manifest lifecycle state into that runtime registry.
 
 ### Remaining gaps
 
-- Live Agent tool dispatch still uses its tools-crate lifecycle path instead of the runtime subagent registry
 - Parent/child runtime context propagation and result handoff are not yet wired into Agent jobs
+- Registry cancellation is not yet connected back into externally dispatched Agent execution
 - No persistent background-task/session-history orchestration comparable to the full TypeScript implementation
 - No complete TypeScript-equivalent remote/structured assistant transport stack
 - Event-level parity across every structured/remote mode still needs expansion
 
-**Status:** strong core loop plus a reusable orchestration primitive; live subagent integration is the next priority.
+**Status:** live Agent lifecycle is now represented in the shared runtime registry; nested orchestration semantics are the next slice.
 
 ---
 
@@ -171,11 +170,11 @@ Core provider APIs, OAuth, usage accounting, MCP bootstrap/client support, remot
 - **Phase 9C:** added deterministic provider/transport fault-injection verification, including retry exhaustion and truncated stream handling.
 - **Phase 9D:** wired the runtime-backed MCP inspector into the interactive `/mcp` slash-command registry.
 - **Phase 10A:** added a runtime-owned subagent orchestration registry with parent linkage, explicit lifecycle transitions, cooperative cancellation, duplicate-ID protection, and terminal result/error capture.
+- **Phase 10B:** synchronized live Agent manifest lifecycle state into the runtime subagent registry without rewriting the existing dispatcher.
 
 ## recommended next implementation targets
 
-1. **Phase 10B — live Agent integration:** wire the existing Agent tool dispatcher to the runtime `SubagentRegistry`, preserving current external manifest/status behavior while moving orchestration state ownership into runtime.
-2. **Phase 10C — parent/child semantics:** propagate parent context, cancellation, and result/error handoff through nested Agent jobs and add deterministic tests for concurrent children.
-3. **Phase 10D — task inspection:** expose registry-backed `/tasks`/agent-status plumbing and session-safe task lookup before adding richer planning/review UX.
-4. Expand structured/remote assistant transport semantics only after the subagent/task model is represented consistently across local execution modes.
-5. Return to richer MCP lifecycle and the broader TypeScript service/tool ecosystem after the subagent architecture is wired through the live dispatcher.
+1. **Phase 10C — parent/child semantics:** propagate parent context, cancellation, and result/error handoff through nested Agent jobs and add deterministic tests for concurrent children.
+2. **Phase 10D — task inspection:** expose registry-backed `/tasks`/agent-status plumbing and session-safe task lookup before adding richer planning/review UX.
+3. Expand structured/remote assistant transport semantics only after the subagent/task model is represented consistently across local execution modes.
+4. Return to richer MCP lifecycle and the broader TypeScript service/tool ecosystem after the subagent architecture is wired through the live dispatcher.

@@ -176,6 +176,7 @@ pub fn atomic_write(path: &Path, contents: &str) -> io::Result<()> {
         file.sync_all()?;
         drop(file);
         fs::rename(&tmp_path, path)?;
+        sync_runtime_agent_state(path, contents);
         Ok(())
     })();
 
@@ -183,6 +184,50 @@ pub fn atomic_write(path: &Path, contents: &str) -> io::Result<()> {
         let _ = fs::remove_file(&tmp_path);
     }
     result
+}
+
+fn sync_runtime_agent_state(path: &Path, contents: &str) {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+        return;
+    }
+
+    let Ok(document) = serde_json::from_str::<serde_json::Value>(contents) else {
+        return;
+    };
+    let Some(agent_id) = document.get("agentId").and_then(serde_json::Value::as_str) else {
+        return;
+    };
+    let Some(description) = document
+        .get("description")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return;
+    };
+    let Some(status) = document.get("status").and_then(serde_json::Value::as_str) else {
+        return;
+    };
+
+    let state = match status {
+        "queued" => runtime::SubagentState::Queued,
+        "running" => runtime::SubagentState::Running,
+        "completed" => runtime::SubagentState::Succeeded,
+        "failed" => runtime::SubagentState::Failed,
+        "cancelled" => runtime::SubagentState::Cancelled,
+        _ => return,
+    };
+    let error = document
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .map(ToString::to_string);
+
+    let _ = runtime::global_subagent_registry().sync_external(
+        agent_id,
+        None,
+        description,
+        state,
+        None,
+        error,
+    );
 }
 
 fn unique_temp_path(path: &Path) -> PathBuf {
@@ -343,6 +388,50 @@ mod tests {
             .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("tmp"))
             .count();
         assert_eq!(tmp_files, 0);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn atomic_write_syncs_agent_manifest_into_runtime_registry() {
+        let dir = temp_path("registry");
+        fs::create_dir_all(&dir).expect("create directory");
+        let path = dir.join("agent.json");
+
+        atomic_write(
+            &path,
+            r#"{"agentId":"external-agent-1","description":"live work","status":"queued"}"#,
+        )
+        .expect("queued manifest write");
+        let queued = runtime::global_subagent_registry()
+            .snapshot("external-agent-1")
+            .expect("registry snapshot")
+            .expect("agent record");
+        assert_eq!(queued.state, runtime::SubagentState::Queued);
+        assert_eq!(queued.description, "live work");
+
+        atomic_write(
+            &path,
+            r#"{"agentId":"external-agent-1","description":"live work","status":"running"}"#,
+        )
+        .expect("running manifest write");
+        let running = runtime::global_subagent_registry()
+            .snapshot("external-agent-1")
+            .expect("registry snapshot")
+            .expect("agent record");
+        assert_eq!(running.state, runtime::SubagentState::Running);
+
+        atomic_write(
+            &path,
+            r#"{"agentId":"external-agent-1","description":"live work","status":"failed","error":"boom"}"#,
+        )
+        .expect("failed manifest write");
+        let failed = runtime::global_subagent_registry()
+            .snapshot("external-agent-1")
+            .expect("registry snapshot")
+            .expect("agent record");
+        assert_eq!(failed.state, runtime::SubagentState::Failed);
+        assert_eq!(failed.error.as_deref(), Some("boom"));
+
         let _ = fs::remove_dir_all(dir);
     }
 }
