@@ -2,7 +2,7 @@ name: Phase 10D fix 6
 
 on:
   push:
-    branches: [phase-10d-task-inspection]
+    branches: [phase-10d-task-inspection-repair]
 
 permissions:
   contents: write
@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: phase-10d-task-inspection
+          ref: phase-10d-task-inspection-repair
           fetch-depth: 0
       - name: Apply source fixes
         run: |
@@ -23,9 +23,8 @@ jobs:
           p = Path('rust/crates/commands/src/lib.rs')
           s = p.read_text()
           old = 'assert_eq!(slash_command_specs().len(), 30);'
-          if old not in s:
-              raise SystemExit('expected help-count assertion not found')
-          s = s.replace(old, 'assert_eq!(slash_command_specs().len(), 31);', 1)
+          if old in s:
+              s = s.replace(old, 'assert_eq!(slash_command_specs().len(), 31);', 1)
           start = s.index('fn render_task_row(')
           end = s.index('\nfn render_task_snapshot(', start)
           new = '''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
@@ -48,19 +47,15 @@ jobs:
           s = s[:start] + new + s[end:]
           p.write_text(s)
           PY
-          grep -n 'slash_command_specs().len' rust/crates/commands/src/lib.rs | tail -3
-          sed -n '/fn render_task_row(/,/^fn render_task_snapshot/p' rust/crates/commands/src/lib.rs
+          cd rust && cargo test -p commands tasks_command_parses_and_renders_registry_state --lib
           git diff --check
-          git diff -- rust/crates/commands/src/lib.rs
-      - name: Commit source fixes
+      - name: Commit source fixes and clean temporary workflows
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add rust/crates/commands/src/lib.rs
+          rm -f .github/workflows/phase-10d-apply-fix.yml .github/workflows/phase-10d-fix5.yml .github/workflows/phase-10d-fix6.yml .github/workflows/phase-10d-repair.yml .github/workflows/phase-10d-test-fix.yml phase-10d-trigger.txt
+          git add rust/crates/commands/src/lib.rs .github/workflows phase-10d-trigger.txt
+          git diff --cached --check
+          if git diff --cached --quiet; then exit 0; fi
           git commit -m 'fix: complete phase 10d task inspection'
-          git push origin HEAD:phase-10d-task-inspection
-      - name: Remove temporary workflow
-        run: |
-          git rm .github/workflows/phase-10d-fix6.yml
-          git commit -m 'chore: remove temporary Phase 10D fix workflow'
-          git push origin HEAD:phase-10d-task-inspection
+          git push origin HEAD:phase-10d-task-inspection-repair
