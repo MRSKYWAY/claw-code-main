@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::{Display, Formatter};
 
+use crate::cancellation::CancellationToken;
 use crate::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
 };
@@ -30,6 +31,13 @@ pub enum AssistantEvent {
 
 pub trait ApiClient {
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError>;
+
+    fn stream_with_cancellation(&mut self, request: ApiRequest, cancellation: &CancellationToken) -> Result<Vec<AssistantEvent>, RuntimeError> {
+        if cancellation.is_cancelled() {
+            return Err(RuntimeError::new("conversation turn cancelled"));
+        }
+        self.stream(request)
+    }
 }
 
 pub trait ToolExecutor {
@@ -137,8 +145,21 @@ where
     pub fn run_turn(
         &mut self,
         user_input: impl Into<String>,
-        mut prompter: Option<&mut dyn PermissionPrompter>,
+        prompter: Option<&mut dyn PermissionPrompter>,
     ) -> Result<TurnSummary, RuntimeError> {
+        self.run_turn_with_cancellation(user_input, prompter, &CancellationToken::new())
+    }
+
+    pub fn run_turn_with_cancellation(
+        &mut self,
+        user_input: impl Into<String>,
+        mut prompter: Option<&mut dyn PermissionPrompter>,
+        cancellation: &CancellationToken,
+    ) -> Result<TurnSummary, RuntimeError> {
+        if cancellation.is_cancelled() {
+            return Err(RuntimeError::new("conversation turn cancelled"));
+        }
+
         self.session
             .messages
             .push(ConversationMessage::user_text(user_input.into()));
@@ -155,11 +176,15 @@ where
                 ));
             }
 
+            if cancellation.is_cancelled() {
+                return Err(RuntimeError::new("conversation turn cancelled"));
+            }
+
             let request = ApiRequest {
                 system_prompt: self.system_prompt.clone(),
                 messages: self.session.messages.clone(),
             };
-            let events = self.api_client.stream(request)?;
+            let events = self.api_client.stream_with_cancellation(request, cancellation)?;
             let (assistant_message, usage) = build_assistant_message(events)?;
             validate_assistant_tool_uses(&assistant_message)?;
             if let Some(usage) = usage {
@@ -184,6 +209,9 @@ where
             }
 
             for (tool_use_id, tool_name, input) in pending_tool_uses {
+                if cancellation.is_cancelled() {
+                    return Err(RuntimeError::new("conversation turn cancelled"));
+                }
                 let permission_outcome = if let Some(prompt) = prompter.as_mut() {
                     self.permission_policy
                         .authorize(&tool_name, &input, Some(*prompt))

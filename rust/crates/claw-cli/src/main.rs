@@ -4796,7 +4796,7 @@ mod tests {
             names,
             vec![
                 "help", "status", "mcp", "hooks", "compact", "clear", "cost", "config", "memory", "init", "diff",
-                "version", "export", "agents", "skills",
+                "version", "export", "agents", "skills", "tasks",
             ]
         );
     }

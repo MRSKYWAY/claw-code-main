@@ -238,6 +238,11 @@ impl SubagentRegistry {
         Ok(true)
     }
 
+    pub fn cancellation_token(&self, id: &str) -> Result<CancellationToken, SubagentError> {
+        let records = self.inner.lock().map_err(|_| SubagentError::RegistryPoisoned)?;
+        records.get(id).map(|record| record.cancellation.clone()).ok_or_else(|| SubagentError::UnknownId(id.to_string()))
+    }
+
     pub fn snapshot(&self, id: &str) -> Result<Option<SubagentSnapshot>, SubagentError> {
         let records = self
             .inner
