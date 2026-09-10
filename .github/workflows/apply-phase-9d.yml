@@ -34,6 +34,11 @@ jobs:
           new = "        assert_eq!(slash_command_specs().len(), 30);"
           if old not in text:
               raise SystemExit("command spec count anchor not found")
+          text = text.replace(old, new, 1)
+          old = "        assert_eq!(resume_supported_slash_commands().len(), 14);"
+          new = "        assert_eq!(resume_supported_slash_commands().len(), 15);"
+          if old not in text:
+              raise SystemExit("resume command count anchor not found")
           commands.write_text(text.replace(old, new, 1))
 
           cli = Path("crates/claw-cli/src/main.rs")
