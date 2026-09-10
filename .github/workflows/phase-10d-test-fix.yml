@@ -16,21 +16,47 @@ jobs:
         with:
           ref: phase-10d-task-inspection
           fetch-depth: 0
-      - name: Update expected resume command surface
+      - name: Fix task renderer and help assertion
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('rust/crates/claw-cli/src/main.rs')
+          p = Path('rust/crates/commands/src/lib.rs')
           s = p.read_text()
-          old = '                "version", "export", "agents", "skills",\n'
-          new = '                "version", "export", "agents", "skills", "tasks",\n'
-          if s.count(old) != 1:
-              raise SystemExit(f'expected exactly one match, found {s.count(old)}')
-          p.write_text(s.replace(old, new, 1))
+          old = 'assert_eq!(slash_command_specs().len(), 30);'
+          assert old in s
+          s = s.replace(old, 'assert_eq!(slash_command_specs().len(), 31);', 1)
+          start = s.index('fn render_task_row(')
+          end = s.index('\nfn render_task_snapshot(', start)
+          new = '''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
+    let parent = snapshot.parent_id.as_deref().unwrap_or("-");
+    let result = snapshot
+        .result
+        .as_deref()
+        .map_or(String::new(), |value| format!("\\n    Result           {value}"));
+    let error = snapshot
+        .error
+        .as_deref()
+        .map_or(String::new(), |value| format!("\\n    Error            {value}"));
+    format!(
+        "  {:<24} {:<11} parent={parent}\\n    {}{result}{error}",
+        snapshot.id,
+        format_task_state(snapshot.state),
+        snapshot.description,
+    )
+}'''
+          s = s[:start] + new + s[end:]
+          p.write_text(s)
           PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add rust/crates/claw-cli/src/main.rs
+          git add rust/crates/commands/src/lib.rs
           git diff --cached --check
-          git commit -m 'test: include tasks in resume command surface'
+          git commit -m 'fix: complete phase 10d task rendering'
+          git push origin phase-10d-task-inspection
+      - name: Remove temporary workflow
+        run: |
+          git rm .github/workflows/phase-10d-test-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore: remove temporary Phase 10D test workflow'
           git push origin phase-10d-task-inspection
