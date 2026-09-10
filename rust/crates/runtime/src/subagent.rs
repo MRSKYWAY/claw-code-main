@@ -175,7 +175,9 @@ impl SubagentRegistry {
                 });
             }
             record.snapshot.state = state;
-            record.snapshot.parent_id = parent_id;
+            if parent_id.is_some() || record.snapshot.parent_id.is_none() {
+                record.snapshot.parent_id = parent_id;
+            }
             record.snapshot.description = description;
             if result.is_some() {
                 record.snapshot.result = result;
@@ -205,23 +207,38 @@ impl SubagentRegistry {
         Ok(snapshot)
     }
 
+    /// Cancel an agent and recursively propagate cancellation to all registered descendants.
+    ///
+    /// This is registry-level cooperative cancellation: native registry tasks observe their
+    /// token directly, while external dispatchers observe the terminal registry state through
+    /// the same lifecycle synchronization boundary.
     pub fn cancel(&self, id: &str) -> Result<bool, SubagentError> {
-        let records = self
-            .inner
-            .lock()
-            .map_err(|_| SubagentError::RegistryPoisoned)?;
-        let Some(record) = records.get(id) else {
-            return Ok(false);
+        let child_ids = {
+            let records = self
+                .inner
+                .lock()
+                .map_err(|_| SubagentError::RegistryPoisoned)?;
+            let Some(record) = records.get(id) else {
+                return Ok(false);
+            };
+            record.cancellation.cancel();
+            records
+                .values()
+                .filter(|record| record.snapshot.parent_id.as_deref() == Some(id))
+                .map(|record| record.snapshot.id.clone())
+                .collect::<Vec<_>>()
         };
-        record.cancellation.cancel();
-        drop(records);
+
         let snapshot = self
             .snapshot(id)?
             .ok_or_else(|| SubagentError::UnknownId(id.to_string()))?;
-        if snapshot.state.is_terminal() {
-            return Ok(true);
+        if !snapshot.state.is_terminal() {
+            self.transition(id, SubagentState::Cancelled)?;
         }
-        self.transition(id, SubagentState::Cancelled)?;
+
+        for child_id in child_ids {
+            let _ = self.cancel(&child_id)?;
+        }
         Ok(true)
     }
 
@@ -403,7 +420,7 @@ mod tests {
         let queued = registry
             .sync_external(
                 "agent-1",
-                None,
+                Some("parent-1".to_string()),
                 "live agent",
                 SubagentState::Queued,
                 None,
@@ -411,6 +428,7 @@ mod tests {
             )
             .expect("queued sync should succeed");
         assert_eq!(queued.state, SubagentState::Queued);
+        assert_eq!(queued.parent_id.as_deref(), Some("parent-1"));
 
         let running = registry
             .sync_external(
@@ -423,6 +441,7 @@ mod tests {
             )
             .expect("running sync should succeed");
         assert_eq!(running.state, SubagentState::Running);
+        assert_eq!(running.parent_id.as_deref(), Some("parent-1"));
 
         let completed = registry
             .sync_external(
@@ -469,6 +488,46 @@ mod tests {
                 to: SubagentState::Queued,
             }
         ));
+    }
+
+    #[test]
+    fn cancellation_cascades_through_parent_children() {
+        let registry = SubagentRegistry::new();
+        registry
+            .sync_external(
+                "parent",
+                None,
+                "parent work",
+                SubagentState::Running,
+                None,
+                None,
+            )
+            .expect("parent should sync");
+        registry
+            .sync_external(
+                "child",
+                Some("parent".to_string()),
+                "child work",
+                SubagentState::Running,
+                None,
+                None,
+            )
+            .expect("child should sync");
+        registry
+            .sync_external(
+                "grandchild",
+                Some("child".to_string()),
+                "grandchild work",
+                SubagentState::Running,
+                None,
+                None,
+            )
+            .expect("grandchild should sync");
+
+        assert!(registry.cancel("parent").expect("cascade should succeed"));
+        assert_eq!(registry.snapshot("parent").expect("snapshot").expect("parent").state, SubagentState::Cancelled);
+        assert_eq!(registry.snapshot("child").expect("snapshot").expect("child").state, SubagentState::Cancelled);
+        assert_eq!(registry.snapshot("grandchild").expect("snapshot").expect("grandchild").state, SubagentState::Cancelled);
     }
 
     #[tokio::test]
