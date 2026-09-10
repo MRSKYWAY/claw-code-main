@@ -88,7 +88,7 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
     },
     ModelCatalogEntry {
         alias: "nvidia-fast",
-        model: "deepseek-ai/deepseek-v4-flash-0731",
+        model: "nvidia/nemotron-3.5-lightning-30b-a3b",
         label: "NVIDIA · Fast",
         metadata: NVIDIA,
         capabilities: ModelCapabilities { max_output_tokens: 16_384, supports_tools: true, supports_streaming: true, supports_reasoning: true },
@@ -102,14 +102,14 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
     },
     ModelCatalogEntry {
         alias: "nvidia-agent",
-        model: "deepseek-ai/deepseek-v4-pro-0813",
+        model: "nvidia/nemotron-3-ultra-550b-a55b",
         label: "NVIDIA · Agent",
         metadata: NVIDIA,
         capabilities: ModelCapabilities { max_output_tokens: 16_384, supports_tools: true, supports_streaming: true, supports_reasoning: true },
     },
     ModelCatalogEntry {
         alias: "nvidia-long",
-        model: "deepseek-ai/deepseek-v4-pro-0813",
+        model: "nvidia/nemotron-3-ultra-550b-a55b",
         label: "NVIDIA · Long context",
         metadata: NVIDIA,
         capabilities: ModelCapabilities { max_output_tokens: 16_384, supports_tools: true, supports_streaming: true, supports_reasoning: true },
@@ -212,16 +212,17 @@ mod tests {
     fn resolves_gemini_and_nvidia_aliases() {
         assert_eq!(resolve_model_alias("gemini-flash"), "gemini-3.8-flash");
         assert_eq!(resolve_model_alias("gemini-pro"), "gemini-3.1-pro-preview");
-        assert_eq!(resolve_model_alias("nvidia-fast"), "deepseek-ai/deepseek-v4-flash-0731");
-        assert_eq!(resolve_model_alias("nvidia-agent"), "deepseek-ai/deepseek-v4-pro-0813");
+        assert_eq!(resolve_model_alias("nvidia-fast"), "nvidia/nemotron-3.5-lightning-30b-a3b");
+        assert_eq!(resolve_model_alias("nvidia-agent"), "nvidia/nemotron-3-ultra-550b-a55b");
         assert_eq!(resolve_model_alias("nvidia-plan"), "moonshotai/kimi-k3");
+        assert_eq!(resolve_model_alias("nvidia-long"), "nvidia/nemotron-3-ultra-550b-a55b");
     }
 
     #[test]
     fn detects_provider_from_model_name_first() {
         assert_eq!(detect_provider_kind("gemini-flash"), ProviderKind::Gemini);
         assert_eq!(detect_provider_kind("nvidia-fast"), ProviderKind::Nvidia);
-        assert_eq!(detect_provider_kind("deepseek-ai/deepseek-v4-pro-0813"), ProviderKind::Nvidia);
+        assert_eq!(detect_provider_kind("nvidia/nemotron-3-ultra-550b-a55b"), ProviderKind::Nvidia);
         assert_eq!(detect_provider_kind("moonshotai/kimi-k3"), ProviderKind::Nvidia);
     }
 
