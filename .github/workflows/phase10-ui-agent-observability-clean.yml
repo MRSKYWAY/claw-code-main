@@ -1,0 +1,185 @@
+name: Phase 10 UI agent observability refinement
+
+on:
+  push:
+    branches: [phase-10-ui-agent-observability-clean]
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    if: contains(github.event.head_commit.message, '[skip ci]') == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: phase-10-ui-agent-observability-clean
+
+      - name: Apply deterministic UI refinement
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('rust/crates/server/src/web.html')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  '.rail {\n      background: linear-gradient(180deg, #0d0d14f2, #0a0a10e8);',
+                  '.rail {\n      background: linear-gradient(180deg, #0d0d14f2, #0a0a10e8);\n      min-height: 0;\n      overflow: hidden;',
+                  'rail overflow',
+              ),
+              (
+                  '.sessions { display: grid; gap: 5px; overflow: auto; }',
+                  '.sessions { display: grid; gap: 5px; flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }',
+                  'session scroller',
+              ),
+              (
+                  '.side {\n      background:#0c0c13ee;\n      border-left:1px solid var(--border);\n      padding:20px 16px;\n      overflow:auto;',
+                  '.side {\n      background:#0c0c13ee;\n      border-left:1px solid var(--border);\n      padding:20px 16px;\n      height:100vh;\n      min-height:0;\n      overflow-y:auto;\n      overflow-x:hidden;\n      overscroll-behavior:contain;\n      scrollbar-width:thin;',
+                  'runbook scroller',
+              ),
+              (
+                  '.agent span { margin-top:3px; color:var(--muted-foreground); font:10px "Share Tech Mono",monospace; }',
+                  '.agent span { margin-top:3px; color:var(--muted-foreground); font:10px "Share Tech Mono",monospace; }\n    .agent-group-label { margin:2px 0 9px; color:var(--accent-tertiary); font:10px "Share Tech Mono",monospace; letter-spacing:.14em; text-transform:uppercase; }\n    .agent-group-empty { padding:4px 0 10px; color:#555b68; font:10px "Share Tech Mono",monospace; }\n    .agent-history { margin-top:6px; border-top:1px solid #232332; padding-top:8px; }\n    .agent-history summary { cursor:pointer; color:#9ca3af; font:10px "Share Tech Mono",monospace; text-transform:uppercase; letter-spacing:.1em; }\n    .agent-history summary:hover { color:var(--accent); text-shadow:0 0 6px #00ff8840; }\n    .agent-history-list { margin-top:10px; }',
+                  'agent grouping styles',
+              ),
+          ]
+
+          for old, new, label in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, found {count}')
+              text = text.replace(old, new, 1)
+
+          old_runtime = '''    async function refreshRuntimeStatus() {
+      const response = await fetch('/status');
+      if (!response.ok) throw Error('Runtime status unavailable');
+      const data = await response.json();
+      const sessionLabel = data.session_count === 1 ? 'session' : 'sessions';
+      const agentLabel = data.agent_count === 1 ? 'agent' : 'agents';
+      $('runtime').textContent = `${data.status} · ${data.session_count} ${sessionLabel} · ${data.message_count} messages · ${data.model_count} models · ${data.agent_count} ${agentLabel}`;
+    }
+'''
+          new_runtime = '''    async function refreshRuntimeStatus() {
+      const [statusResponse, agentsResponse] = await Promise.all([fetch('/status'), fetch('/agents')]);
+      if (!statusResponse.ok) throw Error('Runtime status unavailable');
+      const data = await statusResponse.json();
+      const agents = agentsResponse.ok ? await agentsResponse.json() : { agents: [] };
+      const activeAgents = (agents.agents || []).filter(agent => agent.status === 'queued' || agent.status === 'running').length;
+      const sessionLabel = data.session_count === 1 ? 'session' : 'sessions';
+      const activeAgentLabel = activeAgents === 1 ? 'active agent' : 'active agents';
+      $('runtime').textContent = `${data.status} · ${data.session_count} ${sessionLabel} · ${data.message_count} messages · ${data.model_count} models · ${activeAgents} ${activeAgentLabel}`;
+    }
+'''
+          if old_runtime not in text:
+              raise SystemExit('active agent header: expected source function not found')
+          text = text.replace(old_runtime, new_runtime, 1)
+
+          old_agents = '''    async function refreshAgents() {
+      const response = await fetch('/agents');
+      if (!response.ok) return;
+      const data = await response.json();
+      const root = $('agents');
+      root.innerHTML = '';
+      if (!data.agents.length) {
+        const empty = document.createElement('div');
+        empty.className = 'agent';
+        const title = document.createElement('strong');
+        title.textContent = 'No agents yet';
+        const detail = document.createElement('span');
+        detail.textContent = 'Ask Claw to delegate a task';
+        empty.append(title, detail);
+        root.append(empty);
+        return;
+      }
+      data.agents.slice(0, 8).forEach(agent => {
+        const node = document.createElement('div');
+        node.className = `agent ${agent.status}`;
+        const title = document.createElement('strong');
+        title.textContent = agent.name || agent.subagentType || agent.agentId;
+        const detail = document.createElement('span');
+        detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`;
+        node.append(title, detail);
+        root.append(node);
+      });
+    }
+'''
+          new_agents = '''    async function refreshAgents() {
+      const response = await fetch('/agents');
+      if (!response.ok) return;
+      const data = await response.json();
+      const root = $('agents');
+      root.innerHTML = '';
+      const agents = data.agents || [];
+      const active = agents.filter(agent => agent.status === 'queued' || agent.status === 'running');
+      const history = agents.filter(agent => agent.status !== 'queued' && agent.status !== 'running');
+
+      const activeLabel = document.createElement('div');
+      activeLabel.className = 'agent-group-label';
+      activeLabel.textContent = `Active · ${active.length}`;
+      root.append(activeLabel);
+
+      if (!active.length) {
+        const empty = document.createElement('div');
+        empty.className = 'agent-group-empty';
+        empty.textContent = 'No active agents';
+        root.append(empty);
+      } else {
+        active.slice(0, 8).forEach(agent => {
+          const node = document.createElement('div');
+          node.className = `agent ${agent.status}`;
+          const title = document.createElement('strong');
+          title.textContent = agent.name || agent.subagentType || agent.agentId;
+          const detail = document.createElement('span');
+          detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`;
+          node.append(title, detail);
+          root.append(node);
+        });
+      }
+
+      if (history.length) {
+        const details = document.createElement('details');
+        details.className = 'agent-history';
+        const summary = document.createElement('summary');
+        summary.textContent = `History · ${history.length}`;
+        details.append(summary);
+        const list = document.createElement('div');
+        list.className = 'agent-history-list';
+        history.slice(0, 12).forEach(agent => {
+          const node = document.createElement('div');
+          node.className = `agent ${agent.status}`;
+          const title = document.createElement('strong');
+          title.textContent = agent.name || agent.subagentType || agent.agentId;
+          const detail = document.createElement('span');
+          detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`;
+          node.append(title, detail);
+          list.append(node);
+        });
+        details.append(list);
+        root.append(details);
+      }
+    }
+'''
+          if old_agents not in text:
+              raise SystemExit('agent grouping: expected source function not found')
+          text = text.replace(old_agents, new_agents, 1)
+
+          path.write_text(text, encoding='utf-8')
+
+          workflow = Path('.github/workflows/phase10-ui-agent-observability-clean.yml')
+          workflow.unlink()
+
+      - name: Commit refined UI and remove bootstrap workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust/crates/server/src/web.html .github/workflows/phase10-ui-agent-observability-clean.yml
+          if git diff --cached --quiet; then
+            exit 1
+          fi
+          git commit -m "refine web agent observability [skip ci]"
+          git push origin HEAD:phase-10-ui-agent-observability-clean
