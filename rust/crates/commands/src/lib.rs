@@ -1955,6 +1955,7 @@ pub fn handle_slash_command(
         | SlashCommand::Plugins { .. }
         | SlashCommand::Agents { .. }
         | SlashCommand::Skills { .. }
+        | SlashCommand::Tasks { .. }
         | SlashCommand::Mcp
         | SlashCommand::Unknown(_) => None,
     }

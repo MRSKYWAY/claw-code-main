@@ -573,7 +573,7 @@ fn usage_from_metadata(usage_metadata: Option<GeminiUsageMetadata>) -> Usage {
 fn infer_stop_reason(finish_reason: Option<&str>, blocks: &[OutputContentBlock]) -> String {
     match finish_reason {
         Some("MAX_TOKENS") => "max_tokens".to_string(),
-        Some("STOP") | Some("FINISH_REASON_UNSPECIFIED") | None => {
+        Some("STOP" | "FINISH_REASON_UNSPECIFIED") | None => {
             if blocks
                 .iter()
                 .any(|block| matches!(block, OutputContentBlock::ToolUse { .. }))
