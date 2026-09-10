@@ -106,7 +106,20 @@ impl SubagentRegistry {
         let registry = self.clone();
         let task_id = id.clone();
         let join = tokio::spawn(async move {
-            let _ = registry.transition(&task_id, SubagentState::Running);
+            if cancellation.is_cancelled() {
+                return;
+            }
+            if registry
+                .transition(&task_id, SubagentState::Running)
+                .is_err()
+            {
+                return;
+            }
+            if cancellation.is_cancelled() {
+                let _ = registry.transition(&task_id, SubagentState::Cancelled);
+                return;
+            }
+
             let result = task(cancellation.clone()).await;
             match result {
                 Ok(value) => {
@@ -143,6 +156,12 @@ impl SubagentRegistry {
         };
         record.cancellation.cancel();
         drop(records);
+        let snapshot = self
+            .snapshot(id)?
+            .ok_or_else(|| SubagentError::UnknownId(id.to_string()))?;
+        if snapshot.state.is_terminal() {
+            return Ok(true);
+        }
         self.transition(id, SubagentState::Cancelled)?;
         Ok(true)
     }
@@ -250,7 +269,8 @@ impl SubagentHandle {
 
     pub async fn join(mut self) -> Result<SubagentSnapshot, SubagentError> {
         if let Some(join) = self.join.take() {
-            join.await.map_err(|error| SubagentError::Join(error.to_string()))?;
+            join.await
+                .map_err(|error| SubagentError::Join(error.to_string()))?;
         }
         self.registry
             .snapshot(&self.id)?
@@ -289,6 +309,7 @@ impl std::error::Error for SubagentError {}
 #[cfg(test)]
 mod tests {
     use super::{SubagentRegistry, SubagentState};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     #[tokio::test]
@@ -326,6 +347,24 @@ mod tests {
         assert!(handle.cancel().expect("cancel should succeed"));
         let completed = handle.join().await.expect("join should succeed");
         assert_eq!(completed.state, SubagentState::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn queued_cancellation_prevents_task_execution() {
+        let registry = SubagentRegistry::new();
+        let started = Arc::new(Mutex::new(false));
+        let started_by_task = Arc::clone(&started);
+        let handle = registry
+            .spawn("child-queued", None, "queued cancellation", move |_cancel| async move {
+                *started_by_task.lock().expect("started lock") = true;
+                Ok("should not run".to_string())
+            })
+            .expect("spawn should succeed");
+
+        assert!(handle.cancel().expect("cancel should succeed"));
+        let completed = handle.join().await.expect("join should succeed");
+        assert_eq!(completed.state, SubagentState::Cancelled);
+        assert!(!*started.lock().expect("started lock"));
     }
 
     #[tokio::test]
