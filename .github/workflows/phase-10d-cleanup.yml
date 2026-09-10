@@ -1,0 +1,46 @@
+name: Phase 10D cleanup
+
+on:
+  push:
+    branches: [phase-10d-task-inspection]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add focused coverage and parity update
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('rust/crates/commands/src/lib.rs')
+          s = p.read_text()
+          marker = '    #[test]\n    fn parses_supported_slash_commands() {'
+          test = '''    #[test]\n    fn tasks_command_parses_and_renders_registry_state() {\n        assert_eq!(\n            SlashCommand::parse("/tasks"),\n            Some(SlashCommand::Tasks { agent_id: None })\n        );\n        assert_eq!(\n            SlashCommand::parse("/tasks child-1"),\n            Some(SlashCommand::Tasks {\n                agent_id: Some("child-1".to_string())\n            })\n        );\n\n        let registry = runtime::SubagentRegistry::new();\n        registry\n            .sync_external(\n                "z-child",\n                Some("parent".to_string()),\n                "last child",\n                runtime::SubagentState::Succeeded,\n                Some("done".to_string()),\n                None,\n            )\n            .expect("child sync");\n        registry\n            .sync_external(\n                "a-root",\n                None,\n                "root task",\n                runtime::SubagentState::Running,\n                None,\n                None,\n            )\n            .expect("root sync");\n\n        let snapshots = registry.snapshots().expect("snapshots");\n        let report = super::render_tasks_report(&snapshots, None);\n        assert!(report.contains("Tasks"));\n        assert!(report.contains("Total            2"));\n        assert!(report.contains("a-root"));\n        assert!(report.contains("running"));\n        assert!(report.contains("z-child"));\n        assert!(report.contains("parent=parent"));\n        assert!(report.contains("Result           done"));\n        assert!(report.find("a-root").unwrap() < report.find("z-child").unwrap());\n\n        let detail = super::render_tasks_report(&snapshots, Some("z-child"));\n        assert!(detail.contains("State            succeeded"));\n        assert!(detail.contains("Parent           parent"));\n        assert!(detail.contains("Result           done"));\n\n        let missing = super::render_tasks_report(&snapshots, Some("missing"));\n        assert!(missing.contains("Result           not found"));\n    }\n\n'''
+          if 'fn tasks_command_parses_and_renders_registry_state()' not in s:
+              assert s.count(marker) == 1
+              s = s.replace(marker, test + marker)
+          p.write_text(s)
+
+          p = Path('PARITY.md')
+          s = p.read_text()
+          s = s.replace('- Task listing/querying and persistent background-task/session history integration', '- Persistent background-task/session history integration')
+          s = s.replace('- First-class interactive `/plan`, `/review`, `/tasks`, and related command-family parity', '- First-class interactive `/plan`, `/review`, and related command-family parity')
+          s = s.replace('- First-class interactive `/mcp`, `/plan`, `/review`, `/tasks`, and other TypeScript command families', '- First-class interactive `/plan`, `/review`, and other TypeScript command families')
+          s = s.replace('- Subagent/task inspection commands backed by a shared runtime registry', '- Persistent subagent task/session history beyond the live registry')
+          s = s.replace('1. **Phase 10D — task inspection:** expose registry-backed `/tasks`/agent-status plumbing and session-safe task lookup before adding richer planning/review UX.\n2. Wire registry cancellation back into external Agent execution', '1. **Phase 10E — direct Agent cancellation:** wire registry cancellation back into external Agent execution so provider work can terminate cooperatively.\n2. Expand persistent background-task/session history and session-safe lookup')
+          s = s.replace('- **Phase 10C:** propagated nested Agent parent relationships through the existing worker-thread boundary, captured terminal child results from persisted output, and recursively cascaded registry cancellation through descendants without rewriting the large Agent dispatcher.', '- **Phase 10C:** propagated nested Agent parent relationships through the existing worker-thread boundary, captured terminal child results from persisted output, and recursively cascaded registry cancellation through descendants without rewriting the large Agent dispatcher.\n- **Phase 10D:** exposed registry-backed `/tasks` inspection with deterministic listing, parent/state/result/error rendering, and session-safe ID lookup.')
+          p.write_text(s)
+          PY
+          git diff --check
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add rust/crates/commands/src/lib.rs PARITY.md
+          git commit -m "test: cover phase 10D task inspection"
+          git rm .github/workflows/phase-10d-cleanup.yml
+          git commit -m "chore: remove temporary phase 10D cleanup workflow"
+          git push
