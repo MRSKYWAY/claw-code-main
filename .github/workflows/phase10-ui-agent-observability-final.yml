@@ -1,0 +1,144 @@
+name: Phase 10 UI agent observability refinement
+
+on:
+  push:
+    branches: [phase-10-ui-agent-observability-final]
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: phase-10-ui-agent-observability-final
+
+      - name: Refine sidebar and agent observability
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          path = Path('rust/crates/server/src/web.html')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_once(pattern, replacement, label):
+              updated, count = re.subn(pattern, replacement, text_holder[0], count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, found {count}')
+              text_holder[0] = updated
+
+          text_holder = [text]
+
+          replace_once(
+              r'\.rail \{\s*background:#e9eee8cc;([^}]*)\}',
+              r'.rail { background:#e9eee8cc;\1\n      min-height:0; overflow:hidden; }',
+              'rail viewport',
+          )
+          replace_once(
+              r'\.sessions \{\s*display:grid; gap:4px; overflow:auto;\s*\}',
+              '.sessions { display:grid; gap:4px; flex:1 1 auto; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; }',
+              'session scroller',
+          )
+          replace_once(
+              r'\.side \{\s*background:#f8f8f1c9; border-left:1px solid var\(--line\); padding:24px 18px; overflow:auto;\s*\}',
+              '.side { background:#f8f8f1c9; border-left:1px solid var(--line); padding:24px 18px; height:100vh; min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; scrollbar-width:thin; }',
+              'runbook scroller',
+          )
+          replace_once(
+              r'(\.agent span \{[^}]+\})',
+              r'\1\n    .agent-group-label { margin:2px 0 9px; color:var(--green); font:10px ui-monospace,"Cascadia Code",monospace; letter-spacing:.14em; text-transform:uppercase; }\n    .agent-group-empty { padding:4px 0 10px; color:var(--muted); font:10px ui-monospace,"Cascadia Code",monospace; }\n    .agent-history { margin-top:6px; border-top:1px solid #dce1da; padding-top:8px; }\n    .agent-history summary { cursor:pointer; color:var(--muted); font:10px ui-monospace,"Cascadia Code",monospace; text-transform:uppercase; letter-spacing:.1em; }\n    .agent-history summary:hover { color:var(--green); }\n    .agent-history-list { margin-top:10px; }',
+              'agent styles',
+          )
+
+          runtime_pattern = r'    async function refreshRuntimeStatus\(\) \{.*?\n    \}\n'
+          runtime_replacement = '''    async function refreshRuntimeStatus() {
+      const [statusResponse, agentsResponse] = await Promise.all([fetch('/status'), fetch('/agents')]);
+      if (!statusResponse.ok) throw Error('Runtime status unavailable');
+      const data = await statusResponse.json();
+      const agents = agentsResponse.ok ? await agentsResponse.json() : { agents: [] };
+      const activeAgents = (agents.agents || []).filter(agent => agent.status === 'queued' || agent.status === 'running').length;
+      const sessionLabel = data.session_count === 1 ? 'session' : 'sessions';
+      const activeAgentLabel = activeAgents === 1 ? 'active agent' : 'active agents';
+      $('runtime').textContent = `${data.status} · ${data.session_count} ${sessionLabel} · ${data.message_count} messages · ${data.model_count} models · ${activeAgents} ${activeAgentLabel}`;
+    }
+'''
+          text_holder[0], count = re.subn(runtime_pattern, runtime_replacement, text_holder[0], count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit('runtime status function not found')
+
+          agents_pattern = r'    async function refreshAgents\(\) \{.*?\n    \}\n'
+          agents_replacement = '''    async function refreshAgents() {
+      const response = await fetch('/agents');
+      if (!response.ok) return;
+      const data = await response.json();
+      const root = $('agents');
+      root.innerHTML = '';
+      const agents = data.agents || [];
+      const active = agents.filter(agent => agent.status === 'queued' || agent.status === 'running');
+      const history = agents.filter(agent => agent.status !== 'queued' && agent.status !== 'running');
+
+      const activeLabel = document.createElement('div');
+      activeLabel.className = 'agent-group-label';
+      activeLabel.textContent = `Active · ${active.length}`;
+      root.append(activeLabel);
+      if (!active.length) {
+        const empty = document.createElement('div');
+        empty.className = 'agent-group-empty';
+        empty.textContent = 'No active agents';
+        root.append(empty);
+      } else {
+        active.slice(0, 8).forEach(agent => {
+          const node = document.createElement('div');
+          node.className = `agent ${agent.status}`;
+          const title = document.createElement('strong');
+          title.textContent = agent.name || agent.subagentType || agent.agentId;
+          const detail = document.createElement('span');
+          detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`;
+          node.append(title, detail);
+          root.append(node);
+        });
+      }
+
+      if (history.length) {
+        const details = document.createElement('details');
+        details.className = 'agent-history';
+        const summary = document.createElement('summary');
+        summary.textContent = `History · ${history.length}`;
+        details.append(summary);
+        const list = document.createElement('div');
+        list.className = 'agent-history-list';
+        history.slice(0, 12).forEach(agent => {
+          const node = document.createElement('div');
+          node.className = `agent ${agent.status}`;
+          const title = document.createElement('strong');
+          title.textContent = agent.name || agent.subagentType || agent.agentId;
+          const detail = document.createElement('span');
+          detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`;
+          node.append(title, detail);
+          list.append(node);
+        });
+        details.append(list);
+        root.append(details);
+      }
+    }
+'''
+          text_holder[0], count = re.subn(agents_pattern, agents_replacement, text_holder[0], count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit('agents function not found')
+
+          path.write_text(text_holder[0], encoding='utf-8')
+          Path('.github/workflows/phase10-ui-agent-observability-final.yml').unlink()
+
+      - name: Commit refined web UI
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust/crates/server/src/web.html .github/workflows/phase10-ui-agent-observability-final.yml
+          git diff --cached --quiet && exit 1
+          git commit -m "refine web agent observability [skip ci]"
+          git push origin HEAD:phase-10-ui-agent-observability-final
