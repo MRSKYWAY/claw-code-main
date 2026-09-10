@@ -318,7 +318,7 @@ async fn list_models() -> Json<ListModelsResponse> {
             .filter(|entry| !entry.alias.starts_with("claude-"))
             .map(|entry| ModelSummary {
                 alias: entry.alias.to_string(),
-                model: entry.alias.to_string(),
+                model: entry.model.to_string(),
                 label: entry.label.to_string(),
             }),
     );
@@ -725,11 +725,11 @@ mod tests {
         assert!(models
             .models
             .iter()
-            .any(|model| { model.alias == "nvidia-agent" && model.model == "nvidia-agent" }));
+            .any(|model| { model.alias == "nvidia-agent" && model.model == "z-ai/glm-5.2" }));
         assert!(models
             .models
             .iter()
-            .any(|model| { model.alias == "gemini-flash" && model.model == "gemini-flash" }));
+            .any(|model| { model.alias == "gemini-flash" && model.model == "gemini-3.7-flash" }));
     }
 
     #[tokio::test]
