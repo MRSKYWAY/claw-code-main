@@ -27,12 +27,8 @@ impl SubagentState {
         use SubagentState::{Cancelled, Failed, Queued, Running, Succeeded};
         matches!(
             (self, next),
-            (Queued, Running)
-                | (Queued, Failed)
-                | (Queued, Cancelled)
-                | (Running, Succeeded)
-                | (Running, Failed)
-                | (Running, Cancelled)
+            (Queued, Running | Failed | Cancelled)
+                | (Running, Succeeded | Failed | Cancelled)
         )
     }
 }
