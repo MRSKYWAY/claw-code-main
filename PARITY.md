@@ -6,9 +6,9 @@ Method: compare feature surfaces, registries, entrypoints, runtime plumbing, and
 
 ## Executive summary
 
-The Rust port now has a substantially broader foundation than the original parity snapshot recorded earlier in development. Core runtime policy, hooks, plugins, agents, skills, MCP discovery, CLI command handling, and local machine-readable output have all received focused implementation or hardening work.
+The Rust port now has a substantially broader foundation than the original parity snapshot recorded earlier in development. Core runtime policy, hooks, plugins, agents, skills, MCP discovery, CLI command handling, local machine-readable output, and deterministic failure handling have all received focused implementation or hardening work.
 
-The project is still **not feature-parity** with the TypeScript CLI. The highest-value remaining gaps are concentrated in orchestration breadth, remote/structured transport richness, and the long tail of TypeScript service integrations.
+The project is still **not feature-parity** with the TypeScript CLI. The highest-value remaining gaps are concentrated in subagent/background orchestration, remote/structured transport richness, command-family breadth, and the long tail of TypeScript service integrations.
 
 ### Current strengths
 
@@ -24,9 +24,14 @@ The project is still **not feature-parity** with the TypeScript CLI. The highest
 - Shared slash-command registry with `/hooks`, `/agents`, `/skills`, and plugin management
 - JSON-oriented CLI output with terminal UI suppressed in machine-readable mode
 - Local web runtime-status reporting
+- Deterministic provider/transport fault-injection coverage
+- Runtime-owned subagent registry with parent linkage, lifecycle, cancellation, and result capture
 
 ### Remaining major gaps
 
+- Live Agent dispatcher is not yet backed by the runtime subagent registry
+- Rich parent/child context propagation, result handoff, and cancellation semantics across nested agents
+- Task listing/querying and persistent background-task/session history integration
 - Broader TypeScript tool families and workflow/system tools
 - TypeScript-style remote/structured assistant transport layers
 - First-class interactive `/plan`, `/review`, `/tasks`, and related command-family parity
@@ -40,13 +45,13 @@ The project is still **not feature-parity** with the TypeScript CLI. The highest
 
 ### Rust status
 
-The Rust tool registry is centralized and now includes built-ins plus plugin- and MCP-discovered tools. Tool execution is integrated with runtime permission policy and PreToolUse/PostToolUse hooks.
+The Rust tool registry is centralized and now includes built-ins plus plugin- and MCP-discovered tools. Tool execution is integrated with runtime permission policy and PreToolUse/PostToolUse hooks. The Agent tool has explicit lifecycle and bounded concurrency management in the tools crate.
 
 ### Remaining gaps
 
 The major TypeScript families still without dedicated Rust equivalents include user-interaction, LSP-driven workflows, several MCP utility commands, remote triggers, scheduling, task/team workflows, and the larger set of workflow/system tools.
 
-**Status:** broad local tool foundation; still incomplete versus the TypeScript tool catalog.
+**Status:** broad local tool foundation; subagent dispatch remains ready for deeper runtime orchestration integration.
 
 ---
 
@@ -110,8 +115,9 @@ The Rust CLI has a shared slash-command registry, local REPL/one-shot prompt flo
 - TypeScript-style handler decomposition across the full CLI
 - Rich remote/structured transport layers equivalent to `structuredIO`, `remoteIO`, and transport-specific handlers
 - Full machine-readable event/stream contract parity across all execution modes
+- Subagent/task inspection commands backed by a shared runtime registry
 
-**Status:** strong local CLI core; transport and command breadth remain narrower than TypeScript.
+**Status:** strong local CLI core; subagent-aware task UX remains a later integration slice.
 
 ---
 
@@ -119,15 +125,17 @@ The Rust CLI has a shared slash-command registry, local REPL/one-shot prompt flo
 
 ### Rust status
 
-The Rust runtime has a live multi-iteration tool loop, session persistence, permission enforcement, hook-aware tool execution, MCP/plugin tool integration, agent lifecycle coordination, and CLI event rendering.
+The Rust runtime has a live multi-iteration tool loop, session persistence, permission enforcement, hook-aware tool execution, MCP/plugin tool integration, agent lifecycle coordination, and CLI event rendering. Phase 10A now adds a runtime-owned `SubagentRegistry` that tracks parent/child relationships, queued/running/terminal state, cooperative cancellation, and captured results/errors.
 
 ### Remaining gaps
 
+- Live Agent tool dispatch still uses its tools-crate lifecycle path instead of the runtime subagent registry
+- Parent/child runtime context propagation and result handoff are not yet wired into Agent jobs
+- No persistent background-task/session-history orchestration comparable to the full TypeScript implementation
 - No complete TypeScript-equivalent remote/structured assistant transport stack
-- No richer background-task/session-history orchestration comparable to the full TypeScript implementation
 - Event-level parity across every structured/remote mode still needs expansion
 
-**Status:** strong core loop and local orchestration; broader transport/orchestration layers remain incomplete.
+**Status:** strong core loop plus a reusable orchestration primitive; live subagent integration is the next priority.
 
 ---
 
@@ -135,7 +143,7 @@ The Rust runtime has a live multi-iteration tool loop, session persistence, perm
 
 ### Rust status
 
-Core provider APIs, OAuth, usage accounting, MCP bootstrap/client support, remote upstream proxying, and MCP result normalization are implemented. Discovered MCP tools are wired into the live registry. The new MCP inspector binary exposes configured server inventory without opening connections.
+Core provider APIs, OAuth, usage accounting, MCP bootstrap/client support, remote upstream proxying, and MCP result normalization are implemented. Discovered MCP tools are wired into the live registry. The MCP inspector exposes configured server inventory without opening connections. Provider and transport failure behavior now has deterministic fault-injection coverage.
 
 ### Remaining gaps
 
@@ -160,11 +168,14 @@ Core provider APIs, OAuth, usage accounting, MCP bootstrap/client support, remot
 - **Phase 8D:** suppressed terminal spinners and streamed tool UI in machine-readable CLI output modes.
 - **Phase 9A:** added first-class `/hooks` command discovery and inspection routing.
 - **Phase 9B:** added local `/hooks add` and `/hooks remove` persistence while preserving merged runtime defaults.
+- **Phase 9C:** added deterministic provider/transport fault-injection verification, including retry exhaustion and truncated stream handling.
 - **Phase 9D:** wired the runtime-backed MCP inspector into the interactive `/mcp` slash-command registry.
+- **Phase 10A:** added a runtime-owned subagent orchestration registry with parent linkage, explicit lifecycle transitions, cooperative cancellation, duplicate-ID protection, and terminal result/error capture.
 
 ## recommended next implementation targets
 
-1. Expand `/mcp` beyond inspection into connection lifecycle and richer interactive MCP management.
-2. Expand structured/remote assistant transport semantics beyond the local JSON prompt path.
-3. Add the next missing TypeScript command family only after its underlying runtime capability is represented in Rust.
-4. Continue closing the service and tool-family gaps with focused, independently testable slices.
+1. **Phase 10B — live Agent integration:** wire the existing Agent tool dispatcher to the runtime `SubagentRegistry`, preserving current external manifest/status behavior while moving orchestration state ownership into runtime.
+2. **Phase 10C — parent/child semantics:** propagate parent context, cancellation, and result/error handoff through nested Agent jobs and add deterministic tests for concurrent children.
+3. **Phase 10D — task inspection:** expose registry-backed `/tasks`/agent-status plumbing and session-safe task lookup before adding richer planning/review UX.
+4. Expand structured/remote assistant transport semantics only after the subagent/task model is represented consistently across local execution modes.
+5. Return to richer MCP lifecycle and the broader TypeScript service/tool ecosystem after the subagent architecture is wired through the live dispatcher.
