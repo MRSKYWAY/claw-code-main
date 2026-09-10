@@ -15,18 +15,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: phase-9d-mcp-slash-command
-      - name: Fix patch helper anchor
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("phase-9d-patch.py")
-          text = p.read_text()
-          old = '    fn parses_resume_and_config_slash_commands() {'
-          new = '    #[test]\n    fn parses_resume_and_config_slash_commands() {'
-          if old not in text:
-              raise SystemExit("patch helper anchor not found")
-          p.write_text(text.replace(old, new, 1))
-          PY
       - name: Apply patch helper
         run: python3 phase-9d-patch.py
       - name: Validate patch
