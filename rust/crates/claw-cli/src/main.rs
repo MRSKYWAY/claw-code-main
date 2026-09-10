@@ -24,7 +24,7 @@ use api::{
 
 use commands::{
     handle_agents_slash_command, handle_hooks_slash_command, handle_plugins_slash_command,
-    handle_skills_slash_command, render_mcp_report, render_slash_command_help,
+    handle_skills_slash_command, render_mcp_report, render_slash_command_help, render_tasks_report,
     resume_supported_slash_commands,
     slash_command_specs, suggest_slash_commands, SlashCommand,
 };
@@ -1121,6 +1121,13 @@ fn run_resume_command(
                 message: Some(handle_skills_slash_command(args.as_deref(), &cwd)?),
             })
         }
+        SlashCommand::Tasks { agent_id } => {
+            let snapshots = runtime::global_subagent_registry().snapshots()?;
+            Ok(ResumeCommandOutcome {
+                session: session.clone(),
+                message: Some(render_tasks_report(&snapshots, agent_id.as_deref())),
+            })
+        }
         SlashCommand::Bughunter { .. }
         | SlashCommand::Branch { .. }
         | SlashCommand::Worktree { .. }
@@ -1469,6 +1476,10 @@ impl LiveCli {
                 Self::print_skills(args.as_deref())?;
                 false
             }
+            SlashCommand::Tasks { agent_id } => {
+                Self::print_tasks(agent_id.as_deref())?;
+                false
+            }
             SlashCommand::Branch { .. } => {
                 eprintln!(
                     "{}",
@@ -1706,6 +1717,12 @@ impl LiveCli {
     fn print_skills(args: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
         let cwd = env::current_dir()?;
         println!("{}", handle_skills_slash_command(args, &cwd)?);
+        Ok(())
+    }
+
+    fn print_tasks(agent_id: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+        let snapshots = runtime::global_subagent_registry().snapshots()?;
+        println!("{}", render_tasks_report(&snapshots, agent_id));
         Ok(())
     }
 

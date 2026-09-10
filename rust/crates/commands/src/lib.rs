@@ -320,6 +320,14 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         resume_supported: true,
         category: SlashCommandCategory::Automation,
     },
+    SlashCommandSpec {
+        name: "tasks",
+        aliases: &[],
+        summary: "Inspect running and completed Agent tasks",
+        argument_hint: Some("[agent-id]"),
+        resume_supported: true,
+        category: SlashCommandCategory::Automation,
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -393,6 +401,9 @@ pub enum SlashCommand {
     },
     Skills {
         args: Option<String>,
+    },
+    Tasks {
+        agent_id: Option<String>,
     },
     Unknown(String),
 }
@@ -486,6 +497,9 @@ impl SlashCommand {
             },
             "skills" => Self::Skills {
                 args: remainder_after_command(trimmed, command),
+            },
+            "tasks" => Self::Tasks {
+                agent_id: parts.next().map(ToOwned::to_owned),
             },
             other => Self::Unknown(other.to_string()),
         })
@@ -899,6 +913,72 @@ pub fn handle_agents_slash_command(args: Option<&str>, cwd: &Path) -> std::io::R
         }
         Some("-h" | "--help" | "help") => Ok(render_agents_usage(None)),
         Some(args) => Ok(render_agents_usage(Some(args))),
+    }
+}
+
+#[must_use]
+pub fn render_tasks_report(
+    snapshots: &[runtime::SubagentSnapshot],
+    agent_id: Option<&str>,
+) -> String {
+    if let Some(agent_id) = agent_id {
+        let Some(snapshot) = snapshots.iter().find(|snapshot| snapshot.id == agent_id) else {
+            return format!("Tasks\n  Agent            {agent_id}\n  Result           not found");
+        };
+        return render_task_snapshot(snapshot);
+    }
+
+    let mut lines = vec![
+        "Tasks".to_string(),
+        format!("  Total            {}", snapshots.len()),
+    ];
+    if snapshots.is_empty() {
+        lines.push("  No registered Agent tasks.".to_string());
+        return lines.join("\n");
+    }
+    lines.push(String::new());
+    lines.push("Registered tasks".to_string());
+    lines.extend(snapshots.iter().map(render_task_row));
+    lines.join("\n")
+}
+
+fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
+    let parent = snapshot.parent_id.as_deref().unwrap_or("-");
+    format!(
+        "  {:<24} {:<11} parent={parent}\n    {}",
+        snapshot.id,
+        format_task_state(snapshot.state),
+        snapshot.description,
+    )
+}
+
+fn render_task_snapshot(snapshot: &runtime::SubagentSnapshot) -> String {
+    let mut lines = vec![
+        "Task".to_string(),
+        format!("  Agent            {}", snapshot.id),
+        format!("  State            {}", format_task_state(snapshot.state)),
+        format!(
+            "  Parent           {}",
+            snapshot.parent_id.as_deref().unwrap_or("-")
+        ),
+        format!("  Description      {}", snapshot.description),
+    ];
+    if let Some(result) = snapshot.result.as_deref() {
+        lines.push(format!("  Result           {result}"));
+    }
+    if let Some(error) = snapshot.error.as_deref() {
+        lines.push(format!("  Error            {error}"));
+    }
+    lines.join("\n")
+}
+
+fn format_task_state(state: runtime::SubagentState) -> &'static str {
+    match state {
+        runtime::SubagentState::Queued => "queued",
+        runtime::SubagentState::Running => "running",
+        runtime::SubagentState::Succeeded => "succeeded",
+        runtime::SubagentState::Failed => "failed",
+        runtime::SubagentState::Cancelled => "cancelled",
     }
 }
 
@@ -1875,6 +1955,7 @@ pub fn handle_slash_command(
         | SlashCommand::Plugins { .. }
         | SlashCommand::Agents { .. }
         | SlashCommand::Skills { .. }
+        | SlashCommand::Tasks { .. }
         | SlashCommand::Mcp
         | SlashCommand::Unknown(_) => None,
     }
@@ -2050,6 +2131,61 @@ mod tests {
     }
 
     #[allow(clippy::too_many_lines)]
+    #[test]
+    fn tasks_command_parses_and_renders_registry_state() {
+        assert_eq!(
+            SlashCommand::parse("/tasks"),
+            Some(SlashCommand::Tasks { agent_id: None })
+        );
+        assert_eq!(
+            SlashCommand::parse("/tasks child-1"),
+            Some(SlashCommand::Tasks {
+                agent_id: Some("child-1".to_string())
+            })
+        );
+
+        let registry = runtime::SubagentRegistry::new();
+        registry
+            .sync_external(
+                "z-child",
+                Some("parent".to_string()),
+                "last child",
+                runtime::SubagentState::Succeeded,
+                Some("done".to_string()),
+                None,
+            )
+            .expect("child sync");
+        registry
+            .sync_external(
+                "a-root",
+                None,
+                "root task",
+                runtime::SubagentState::Running,
+                None,
+                None,
+            )
+            .expect("root sync");
+
+        let snapshots = registry.snapshots().expect("snapshots");
+        let report = super::render_tasks_report(&snapshots, None);
+        assert!(report.contains("Tasks"));
+        assert!(report.contains("Total            2"));
+        assert!(report.contains("a-root"));
+        assert!(report.contains("running"));
+        assert!(report.contains("z-child"));
+        assert!(report.contains("parent=parent"));
+        assert!(report.contains("Result           done"));
+        assert!(report.find("a-root").unwrap() < report.find("z-child").unwrap());
+
+        let detail = super::render_tasks_report(&snapshots, Some("z-child"));
+        assert!(detail.contains("State            succeeded"));
+        assert!(detail.contains("Parent           parent"));
+        assert!(detail.contains("Result           done"));
+
+        let missing = super::render_tasks_report(&snapshots, Some("missing"));
+        assert!(missing.contains("Result           not found"));
+    }
+
     #[test]
     fn parses_supported_slash_commands() {
         assert_eq!(SlashCommand::parse("/help"), Some(SlashCommand::Help));
