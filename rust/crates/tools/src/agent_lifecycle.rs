@@ -219,7 +219,7 @@ fn sync_runtime_agent_state(path: &Path, contents: &str) {
         .get("error")
         .and_then(serde_json::Value::as_str)
         .map(ToString::to_string);
-    let parent_id = current_agent_parent_id();
+    let parent_id = current_agent_parent_id(agent_id);
     let result = document
         .get("outputFile")
         .and_then(serde_json::Value::as_str)
@@ -240,12 +240,13 @@ fn sync_runtime_agent_state(path: &Path, contents: &str) {
 /// The existing Agent dispatcher names worker threads `claw-agent-{agent_id}`. Child
 /// Agent tool calls execute on that worker thread, so this gives nested agents a stable
 /// parent edge without changing the large Agent tool surface or relying on process-global
-/// mutable context.
-fn current_agent_parent_id() -> Option<String> {
+/// mutable context. A worker never becomes its own parent.
+fn current_agent_parent_id(agent_id: &str) -> Option<String> {
     let name = std::thread::current().name()?;
-    name.strip_prefix("claw-agent-")
-        .filter(|id| !id.is_empty())
-        .map(ToString::to_string)
+    let parent_id = name
+        .strip_prefix("claw-agent-")
+        .filter(|id| !id.is_empty())?;
+    (parent_id != agent_id).then(|| parent_id.to_string())
 }
 
 fn read_agent_result(path: &str) -> Option<String> {
@@ -457,6 +458,7 @@ mod tests {
             .expect("registry snapshot")
             .expect("agent record");
         assert_eq!(running.state, runtime::SubagentState::Running);
+        assert_eq!(running.parent_id, None);
 
         fs::write(
             &output_path,
@@ -520,6 +522,34 @@ mod tests {
             .expect("registry snapshot")
             .expect("child record");
         assert_eq!(child.parent_id.as_deref(), Some("parent-123"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn worker_does_not_infer_itself_as_parent() {
+        let dir = temp_path("self-parent");
+        fs::create_dir_all(&dir).expect("create directory");
+        let path = dir.join("agent.json");
+
+        thread::Builder::new()
+            .name(String::from("claw-agent-agent-123"))
+            .spawn(move || {
+                atomic_write(
+                    &path,
+                    r#"{"agentId":"agent-123","description":"root work","status":"running"}"#,
+                )
+                .expect("agent manifest write");
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("join worker");
+
+        let agent = runtime::global_subagent_registry()
+            .snapshot("agent-123")
+            .expect("registry snapshot")
+            .expect("agent record");
+        assert_eq!(agent.parent_id, None);
 
         let _ = fs::remove_dir_all(dir);
     }
