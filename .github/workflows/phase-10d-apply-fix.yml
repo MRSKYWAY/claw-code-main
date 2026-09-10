@@ -1,21 +1,20 @@
 name: Phase 10D repair runner
 
 on:
-  pull_request_target:
-    types: [reopened]
+  push:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   repair:
-    if: github.event.pull_request.head.ref == 'phase-10d-task-inspection' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - name: Check out Phase 10D branch
+      - name: Check out Phase 10D repair branch
         uses: actions/checkout@v4
         with:
-          ref: phase-10d-task-inspection
+          ref: phase-10d-task-inspection-repair
           fetch-depth: 0
 
       - name: Apply source fixes
@@ -59,9 +58,9 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git checkout origin/main -- .github/workflows/ci.yml
+          git checkout 61aee2cc5c57eb3a0fe7d07537df14221ace60d8 -- .github/workflows/ci.yml
           rm -f .github/workflows/phase-10d-*.yml
           git add rust/crates/commands/src/lib.rs .github/workflows
           git diff --cached --check
           git commit -m 'fix: complete phase 10d task inspection'
-          git push origin HEAD:phase-10d-task-inspection
+          git push origin HEAD:phase-10d-task-inspection-repair
