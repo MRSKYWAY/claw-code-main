@@ -29,7 +29,7 @@ The project is still **not feature-parity** with the TypeScript CLI. The highest
 
 ### Remaining major gaps
 
-- Rich parent/child context propagation, result handoff, and cancellation semantics across nested agents
+- External Agent execution is not yet interruptible directly from registry cancellation; registry cancellation is cooperative at the orchestration/state boundary
 - Task listing/querying and persistent background-task/session history integration
 - Broader TypeScript tool families and workflow/system tools
 - TypeScript-style remote/structured assistant transport layers
@@ -50,7 +50,7 @@ The Rust tool registry is centralized and now includes built-ins plus plugin- an
 
 The major TypeScript families still without dedicated Rust equivalents include user-interaction, LSP-driven workflows, several MCP utility commands, remote triggers, scheduling, task/team workflows, and the larger set of workflow/system tools.
 
-**Status:** broad local tool foundation; live Agent lifecycle is synchronized into the runtime subagent registry.
+**Status:** broad local tool foundation; live Agent lifecycle is synchronized into the runtime subagent registry with nested parent inference and terminal result handoff.
 
 ---
 
@@ -67,8 +67,6 @@ Hook configuration is loaded into runtime state, and the live conversation path 
 
 **Status:** runtime and local command management implemented; broader extension/transport parity remains incomplete.
 
----
-
 ## plugins/
 
 ### Rust status
@@ -82,8 +80,6 @@ The Rust plugin subsystem now covers discovery and lifecycle management, includi
 - Plugin-provided command/MCP integration remains narrower than the TypeScript implementation
 
 **Status:** functional plugin subsystem; broader ecosystem parity remains incomplete.
-
----
 
 ## skills/ and CLAW.md discovery
 
@@ -99,8 +95,6 @@ The Rust CLI exposes `/skills` and direct `claw skills` discovery. Project and u
 - Broader team/session-memory integration around skills is still limited
 
 **Status:** usable local discovery with meaningful parity coverage; registry and dynamic lifecycle parity still missing.
-
----
 
 ## cli/
 
@@ -118,25 +112,20 @@ The Rust CLI has a shared slash-command registry, local REPL/one-shot prompt flo
 
 **Status:** strong local CLI core; subagent-aware task UX remains a later integration slice.
 
----
-
 ## assistant/ (agentic loop, streaming, tool calling)
 
 ### Rust status
 
-The Rust runtime has a live multi-iteration tool loop, session persistence, permission enforcement, hook-aware tool execution, MCP/plugin tool integration, agent lifecycle coordination, and CLI event rendering. Phase 10A now adds a runtime-owned `SubagentRegistry` that tracks parent/child relationships, queued/running/terminal state, cooperative cancellation, and captured results/errors. Phase 10B synchronizes live Agent manifest lifecycle state into that runtime registry.
+The Rust runtime has a live multi-iteration tool loop, session persistence, permission enforcement, hook-aware tool execution, MCP/plugin tool integration, agent lifecycle coordination, and CLI event rendering. Phase 10A adds a runtime-owned `SubagentRegistry` that tracks parent/child relationships, queued/running/terminal state, cooperative cancellation, and captured results/errors. Phase 10B synchronizes live Agent manifest lifecycle state into that runtime registry. Phase 10C now infers parent edges for nested live Agents, hands terminal output back into registry result capture, and recursively propagates registry cancellation through registered descendants.
 
 ### Remaining gaps
 
-- Parent/child runtime context propagation and result handoff are not yet wired into Agent jobs
-- Registry cancellation is not yet connected back into externally dispatched Agent execution
+- External Agent execution still needs direct cancellation-token feedback so cancellation can interrupt provider work rather than only converging registry state
 - No persistent background-task/session-history orchestration comparable to the full TypeScript implementation
 - No complete TypeScript-equivalent remote/structured assistant transport stack
 - Event-level parity across every structured/remote mode still needs expansion
 
-**Status:** live Agent lifecycle is now represented in the shared runtime registry; nested orchestration semantics are the next slice.
-
----
+**Status:** live nested Agent lifecycle and registry semantics are represented consistently; direct interruption and task inspection are the next slices.
 
 ## services/ (API client, auth, models, MCP)
 
@@ -151,8 +140,6 @@ Core provider APIs, OAuth, usage accounting, MCP bootstrap/client support, remot
 - Provider/model ergonomics and service abstractions remain thinner than TypeScript
 
 **Status:** core service foundation is solid; interactive MCP UX and broader ecosystem parity remain missing.
-
----
 
 ## recent parity/hardening work
 
@@ -171,10 +158,11 @@ Core provider APIs, OAuth, usage accounting, MCP bootstrap/client support, remot
 - **Phase 9D:** wired the runtime-backed MCP inspector into the interactive `/mcp` slash-command registry.
 - **Phase 10A:** added a runtime-owned subagent orchestration registry with parent linkage, explicit lifecycle transitions, cooperative cancellation, duplicate-ID protection, and terminal result/error capture.
 - **Phase 10B:** synchronized live Agent manifest lifecycle state into the runtime subagent registry without rewriting the existing dispatcher.
+- **Phase 10C:** propagated nested Agent parent relationships through the existing worker-thread boundary, captured terminal child results from persisted output, and recursively cascaded registry cancellation through descendants without rewriting the large Agent dispatcher.
 
 ## recommended next implementation targets
 
-1. **Phase 10C — parent/child semantics:** propagate parent context, cancellation, and result/error handoff through nested Agent jobs and add deterministic tests for concurrent children.
-2. **Phase 10D — task inspection:** expose registry-backed `/tasks`/agent-status plumbing and session-safe task lookup before adding richer planning/review UX.
+1. **Phase 10D — task inspection:** expose registry-backed `/tasks`/agent-status plumbing and session-safe task lookup before adding richer planning/review UX.
+2. Wire registry cancellation back into external Agent execution so provider work can terminate cooperatively.
 3. Expand structured/remote assistant transport semantics only after the subagent/task model is represented consistently across local execution modes.
 4. Return to richer MCP lifecycle and the broader TypeScript service/tool ecosystem after the subagent architecture is wired through the live dispatcher.
