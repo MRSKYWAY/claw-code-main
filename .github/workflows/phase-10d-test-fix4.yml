@@ -1,0 +1,56 @@
+name: Phase 10D test fix 4
+
+on:
+  push:
+    branches: [phase-10d-task-inspection]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-10d-task-inspection
+          fetch-depth: 0
+      - name: Apply fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('rust/crates/commands/src/lib.rs')
+          s = p.read_text()
+          s, n = re.subn(r'(assert_eq!\(slash_command_specs\(\)\.len\(\), )30(\);)', r'\\g<1>31\\g<2>', s, count=1)
+          if n != 1:
+              raise SystemExit(f'help count replacement matched {n} times')
+          pattern = re.compile(r'(?P<indent>\s*)format!\(\n        "  \{:<24\} \{:<11\} parent=\{parent\}\\\\n    \{\}",\n        snapshot\.id,\n        format_task_state\(snapshot\.state\),\n        snapshot\.description,\n    \)')
+          replacement = '''    format!(
+        "  {:<24} {:<11} parent={parent}\\n    {}{}{}",
+        snapshot.id,
+        format_task_state(snapshot.state),
+        snapshot.description,
+        snapshot.result.as_deref().map_or(String::new(), |result| format!("\\n    Result           {result}")),
+        snapshot.error.as_deref().map_or(String::new(), |error| format!("\\n    Error            {error}")),
+    )'''
+          s, n = pattern.subn(replacement, s, count=1)
+          if n != 1:
+              raise SystemExit('task row renderer pattern did not match')
+          p.write_text(s)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/commands/src/lib.rs
+          git diff --cached --check
+          git commit -m 'fix: update phase 10d help count and task rows'
+          git push origin phase-10d-task-inspection
+      - name: Remove temporary workflow
+        run: |
+          rm .github/workflows/phase-10d-test-fix4.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/phase-10d-test-fix4.yml
+          git commit -m 'chore: remove temporary Phase 10D workflow'
+          git push origin phase-10d-task-inspection
