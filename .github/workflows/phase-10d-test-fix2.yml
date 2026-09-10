@@ -1,0 +1,55 @@
+name: Phase 10D test fix 2
+
+on:
+  push:
+    branches: [phase-10d-task-inspection]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-10d-task-inspection
+          fetch-depth: 0
+      - name: Apply exact test and renderer fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('rust/crates/commands/src/lib.rs')
+          s = p.read_text()
+          replacements = [
+              (
+                  '        assert_eq!(SLASH_COMMAND_SPECS.len(), 30);',
+                  '        assert_eq!(SLASH_COMMAND_SPECS.len(), 31);',
+              ),
+              (
+                  '        "  {:<24} {:<11} parent={parent}\\n",\n        snapshot.id,\n        format_task_state(snapshot.state),\n        snapshot.description,\n    )',
+                  '        "  {:<24} {:<11} parent={parent}\\n    {}{}{}",\n        snapshot.id,\n        format_task_state(snapshot.state),\n        snapshot.description,\n        snapshot.result.as_deref().map_or(String::new(), |result| format!("\\n    Result           {result}")),\n        snapshot.error.as_deref().map_or(String::new(), |error| format!("\\n    Error            {error}")),\n    )',
+              ),
+          ]
+          for old, new in replacements:
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one match, found {count}: {old[:80]!r}')
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/commands/src/lib.rs
+          git diff --cached --check
+          git commit -m 'fix: align phase 10d command tests and task rendering'
+          git push origin phase-10d-task-inspection
+      - name: Remove temporary workflow
+        run: |
+          rm .github/workflows/phase-10d-test-fix2.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/phase-10d-test-fix2.yml
+          git commit -m 'chore: remove temporary Phase 10D test workflow'
+          git push origin phase-10d-task-inspection
