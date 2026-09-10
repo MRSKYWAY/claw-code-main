@@ -26,15 +26,8 @@ impl SseParser {
     }
 
     pub fn finish(&mut self) -> Result<Vec<StreamEvent>, ApiError> {
-        if self.buffer.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let trailing = std::mem::take(&mut self.buffer);
-        match parse_frame(&String::from_utf8_lossy(&trailing))? {
-            Some(event) => Ok(vec![event]),
-            None => Ok(Vec::new()),
-        }
+        self.buffer.clear();
+        Ok(Vec::new())
     }
 
     fn next_frame(&mut self) -> Option<String> {
@@ -149,6 +142,24 @@ mod tests {
                 }
             )]
         );
+    }
+
+    #[test]
+    fn drops_incomplete_trailing_frame() {
+        let mut parser = SseParser::new();
+        let complete = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_partial\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n"
+        );
+        let trailing = b"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"hello\"}}\n";
+
+        let events = parser.push(complete.as_bytes()).expect("complete frame");
+        assert_eq!(events.len(), 1);
+        assert!(parser.push(trailing).expect("trailing data").is_empty());
+        assert!(parser
+            .finish()
+            .expect("EOF should discard incomplete frame")
+            .is_empty());
     }
 
     #[test]
