@@ -96,6 +96,8 @@ are saved after every prompt in `~/.claw/web-sessions.json` (on Windows,
 `%USERPROFILE%\\.claw\\web-sessions.json`). Set `CLAW_WEB_STORE` to use a different local
 storage file. A web prompt fails clearly after 180 seconds instead of waiting forever; set
 `CLAW_WEB_RUN_TIMEOUT_SECS` to a value from `1` to `900` when a slower model needs more time.
+The web server embeds the current model catalog at build time, so rebuild or reinstall
+`claw-web` after model-catalog changes instead of continuing to run an older binary.
 
 To run it directly from this workspace without installing the binary:
 
