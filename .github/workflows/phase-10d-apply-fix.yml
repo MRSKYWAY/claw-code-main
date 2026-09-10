@@ -1,3 +1,4 @@
+# temporary repair runner
 name: Phase 10D apply fix
 
 on:
@@ -17,19 +18,16 @@ jobs:
         with:
           ref: phase-10d-task-inspection
           fetch-depth: 0
-
       - name: Apply Phase 10D fixes
         run: |
           python3 - <<'PY'
           from pathlib import Path
           p = Path('rust/crates/commands/src/lib.rs')
           s = p.read_text()
-
           old = 'assert_eq!(slash_command_specs().len(), 30);'
           if old not in s:
               raise SystemExit('expected help-count assertion not found')
           s = s.replace(old, 'assert_eq!(slash_command_specs().len(), 31);', 1)
-
           start = s.index('fn render_task_row(')
           end = s.index('\nfn render_task_snapshot(', start)
           new = '''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
@@ -52,11 +50,9 @@ jobs:
           s = s[:start] + new + s[end:]
           p.write_text(s)
           PY
-
       - name: Verify targeted tests
         working-directory: rust
         run: cargo test -p commands tasks_command_parses_and_renders_registry_state --lib
-
       - name: Commit source fix and clean temporary workflows
         run: |
           git config user.name 'github-actions[bot]'
