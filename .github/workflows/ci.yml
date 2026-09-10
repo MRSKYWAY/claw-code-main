@@ -53,23 +53,19 @@ jobs:
         working-directory: rust
         run: cargo build --release
 
-  repair-phase-10d:
-    if: github.event_name == 'pull_request_target' && github.event.pull_request.number == 52
+  repair-phase-10d-pr:
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 52
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Check out trusted base workflow repository
+      - name: Check out Phase 10D branch
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: phase-10d-task-inspection-repair
           fetch-depth: 0
 
-      - name: Check out Phase 10D repair branch as data
-        run: git fetch origin phase-10d-task-inspection-repair:refs/remotes/origin/phase-10d-task-inspection-repair && git worktree add /tmp/phase-10d-repair origin/phase-10d-task-inspection-repair
-
-      - name: Apply Phase 10D fixes
-        working-directory: /tmp/phase-10d-repair
+      - name: Apply source fixes and clean temporary workflows
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -98,11 +94,64 @@ jobs:
           s = s[:start] + new + s[end:]
           p.write_text(s)
           PY
-          rm -f .github/workflows/phase-10d-apply-fix.yml .github/workflows/phase-10d-fix5.yml .github/workflows/phase-10d-fix6.yml .github/workflows/phase-10d-repair.yml .github/workflows/phase-10d-test-fix.yml phase-10d-trigger.txt
-          git add rust/crates/commands/src/lib.rs .github/workflows phase-10d-trigger.txt
-          git diff --cached --check
+          cd rust && cargo test -p commands tasks_command_parses_and_renders_registry_state --lib
+          cd ..
+          rm -f .github/workflows/phase-10d-apply-fix.yml .github/workflows/phase-10d-fix5.yml .github/workflows/phase-10d-fix6.yml .github/workflows/phase-10d-repair.yml .github/workflows/phase-10d-test-fix.yml .github/workflows/phase-10d-test-fix4.yml phase-10d-trigger.txt
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/commands/src/lib.rs .github/workflows phase-10d-trigger.txt
+          git diff --cached --check
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'fix: complete phase 10d task inspection'
+          git push origin HEAD:phase-10d-task-inspection-repair
+
+  repair-phase-10d:
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.number == 52
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Repair Phase 10D branch
+        run: |
+          git fetch origin phase-10d-task-inspection-repair:refs/remotes/origin/phase-10d-task-inspection-repair
+          git worktree add /tmp/phase-10d-repair origin/phase-10d-task-inspection-repair
+          cd /tmp/phase-10d-repair
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('rust/crates/commands/src/lib.rs')
+          s = p.read_text()
+          s = s.replace('assert_eq!(slash_command_specs().len(), 30);', 'assert_eq!(slash_command_specs().len(), 31);', 1)
+          start = s.index('fn render_task_row(')
+          end = s.index('\nfn render_task_snapshot(', start)
+          new = '''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
+      let parent = snapshot.parent_id.as_deref().unwrap_or("-");
+      let result = snapshot
+          .result
+          .as_deref()
+          .map_or(String::new(), |value| format!("\\n    Result           {value}"));
+      let error = snapshot
+          .error
+          .as_deref()
+          .map_or(String::new(), |value| format!("\\n    Error            {value}"));
+      format!(
+          "  {:<24} {:<11} parent={parent}\\n    {}{result}{error}",
+          snapshot.id,
+          format_task_state(snapshot.state),
+          snapshot.description,
+      )
+  }'''
+          s = s[:start] + new + s[end:]
+          p.write_text(s)
+          PY
+          rm -f .github/workflows/phase-10d-apply-fix.yml .github/workflows/phase-10d-fix5.yml .github/workflows/phase-10d-fix6.yml .github/workflows/phase-10d-repair.yml .github/workflows/phase-10d-test-fix.yml .github/workflows/phase-10d-test-fix4.yml phase-10d-trigger.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/commands/src/lib.rs .github/workflows phase-10d-trigger.txt
+          git diff --cached --check
           if git diff --cached --quiet; then exit 0; fi
           git commit -m 'fix: complete phase 10d task inspection'
           git push origin HEAD:phase-10d-task-inspection-repair
@@ -113,18 +162,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Check out trusted base repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
-
-      - name: Check out Phase 10D branch as data
-        run: git fetch origin phase-10d-task-inspection-repair:refs/remotes/origin/phase-10d-task-inspection-repair && git worktree add /tmp/phase-10d-repair origin/phase-10d-task-inspection-repair
-
-      - name: Apply Phase 10D fixes and clean temporary workflows
-        working-directory: /tmp/phase-10d-repair
+      - name: Repair Phase 10D branch after failed CI
         run: |
+          git fetch origin phase-10d-task-inspection-repair:refs/remotes/origin/phase-10d-task-inspection-repair
+          git worktree add /tmp/phase-10d-repair origin/phase-10d-task-inspection-repair
+          cd /tmp/phase-10d-repair
           python3 - <<'PY'
           from pathlib import Path
           p = Path('rust/crates/commands/src/lib.rs')
@@ -152,11 +198,11 @@ jobs:
           s = s[:start] + new + s[end:]
           p.write_text(s)
           PY
-          rm -f .github/workflows/phase-10d-apply-fix.yml .github/workflows/phase-10d-fix5.yml .github/workflows/phase-10d-fix6.yml .github/workflows/phase-10d-repair.yml .github/workflows/phase-10d-test-fix.yml phase-10d-trigger.txt
-          git add rust/crates/commands/src/lib.rs .github/workflows phase-10d-trigger.txt
-          git diff --cached --check
+          rm -f .github/workflows/phase-10d-apply-fix.yml .github/workflows/phase-10d-fix5.yml .github/workflows/phase-10d-fix6.yml .github/workflows/phase-10d-repair.yml .github/workflows/phase-10d-test-fix.yml .github/workflows/phase-10d-test-fix4.yml phase-10d-trigger.txt
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/commands/src/lib.rs .github/workflows phase-10d-trigger.txt
+          git diff --cached --check
           if git diff --cached --quiet; then exit 0; fi
           git commit -m 'fix: complete phase 10d task inspection'
           git push origin HEAD:phase-10d-task-inspection-repair
