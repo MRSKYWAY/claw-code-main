@@ -60,3 +60,5 @@ jobs:
           git add rust/crates/commands/src/lib.rs rust/crates/claw-cli/src/main.rs
           git commit -m "fix: finish Phase 10D test surface"
           git push origin HEAD:phase-10d-clean
+
+# enabled from default branch
