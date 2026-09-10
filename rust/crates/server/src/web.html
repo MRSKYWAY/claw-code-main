@@ -19,7 +19,6 @@
       --destructive: #ff3366;
       --shadow-neon: 0 0 5px #00ff88, 0 0 10px #00ff8840;
       --shadow-neon-sm: 0 0 3px #00ff88, 0 0 6px #00ff8830;
-      --shadow-neon-lg: 0 0 10px #00ff88, 0 0 20px #00ff8860, 0 0 40px #00ff8830;
       --shadow-magenta: 0 0 5px #ff00ff, 0 0 20px #ff00ff60;
       --shadow-cyan: 0 0 5px #00d4ff, 0 0 20px #00d4ff60;
       --cut: polygon(0 10px,10px 0,calc(100% - 10px) 0,100% 10px,100% calc(100% - 10px),calc(100% - 10px) 100%,10px 100%,0 calc(100% - 10px));
@@ -62,135 +61,40 @@
     }
     button, select, textarea { font: inherit; }
     button, select { color: inherit; }
-    .app {
-      min-height: 100vh;
-      display: grid;
-      grid-template-columns: 250px minmax(0,1fr) 300px;
-      position: relative;
-      z-index: 1;
-    }
-    .rail {
-      background: linear-gradient(180deg, #0d0d14f2, #0a0a10e8);
-      border-right: 1px solid var(--border);
-      padding: 20px 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-      box-shadow: inset -1px 0 0 #00ff8812;
-    }
-    .brand {
-      color: var(--accent);
-      font: 800 18px/1 "Orbitron", "Share Tech Mono", monospace;
-      letter-spacing: .16em;
-      text-transform: uppercase;
-      padding: 0 8px 8px;
-      text-shadow: 0 0 8px #00ff8860;
-    }
-    .mark {
-      display: inline-grid;
-      place-items: center;
-      width: 28px;
-      height: 28px;
-      margin-right: 8px;
-      background: var(--card);
-      color: var(--accent-secondary);
-      border: 1px solid var(--accent-secondary);
-      clip-path: var(--cut-sm);
-      box-shadow: var(--shadow-magenta);
-      transform: skew(-4deg) rotate(-4deg);
-    }
-    .new, .send {
-      border: 1px solid var(--accent);
-      cursor: pointer;
-      text-transform: uppercase;
-      letter-spacing: .12em;
-      transition: all 120ms steps(4);
-    }
-    .new {
-      background: transparent;
-      color: var(--accent);
-      clip-path: var(--cut-sm);
-      min-height: 44px;
-      text-align: left;
-      padding: 10px 13px;
-      font: 12px "Share Tech Mono", monospace;
-      box-shadow: inset 0 0 0 1px #00ff8810;
-    }
+    .app { height: 100vh; min-height: 0; display: grid; grid-template-columns: 250px minmax(0,1fr) 300px; position: relative; z-index: 1; }
+    .rail { height: 100vh; min-height: 0; overflow: hidden; background: linear-gradient(180deg, #0d0d14f2, #0a0a10e8); border-right: 1px solid var(--border); padding: 20px 14px; display: flex; flex-direction: column; gap: 16px; box-shadow: inset -1px 0 0 #00ff8812; }
+    .brand { color: var(--accent); font: 800 18px/1 "Orbitron", "Share Tech Mono", monospace; letter-spacing: .16em; text-transform: uppercase; padding: 0 8px 8px; text-shadow: 0 0 8px #00ff8860; }
+    .mark { display: inline-grid; place-items: center; width: 28px; height: 28px; margin-right: 8px; background: var(--card); color: var(--accent-secondary); border: 1px solid var(--accent-secondary); clip-path: var(--cut-sm); box-shadow: var(--shadow-magenta); transform: skew(-4deg) rotate(-4deg); }
+    .new, .send { border: 1px solid var(--accent); cursor: pointer; text-transform: uppercase; letter-spacing: .12em; transition: all 120ms steps(4); }
+    .new { background: transparent; color: var(--accent); clip-path: var(--cut-sm); min-height: 44px; text-align: left; padding: 10px 13px; font: 12px "Share Tech Mono", monospace; box-shadow: inset 0 0 0 1px #00ff8810; }
     .new:hover { background: #00ff8817; box-shadow: var(--shadow-neon); }
-    .label {
-      padding: 0 8px;
-      color: var(--muted-foreground);
-      font: 10px "Share Tech Mono", monospace;
-      text-transform: uppercase;
-      letter-spacing: .2em;
-    }
-    .sessions { display: grid; gap: 5px; overflow: auto; }
-    .session {
-      border: 1px solid transparent;
-      background: transparent;
-      text-align: left;
-      padding: 10px 10px;
-      cursor: pointer;
-      color: #9ca3af;
-      clip-path: var(--cut-sm);
-      transition: all 120ms steps(4);
-    }
+    .label { padding: 0 8px; color: var(--muted-foreground); font: 10px "Share Tech Mono", monospace; text-transform: uppercase; letter-spacing: .2em; }
+    .sessions { display: grid; gap: 5px; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-right: 3px; scrollbar-width: thin; scrollbar-color: #00ff8850 transparent; }
+    .sessions::-webkit-scrollbar, .side::-webkit-scrollbar { width: 6px; }
+    .sessions::-webkit-scrollbar-track, .side::-webkit-scrollbar-track { background: transparent; }
+    .sessions::-webkit-scrollbar-thumb, .side::-webkit-scrollbar-thumb { background: #00ff8848; }
+    .session { border: 1px solid transparent; background: transparent; text-align: left; padding: 10px 10px; cursor: pointer; color: #9ca3af; clip-path: var(--cut-sm); transition: all 120ms steps(4); }
     .session:hover { color: var(--foreground); border-color: #2a2a3a; background: #12121a; }
     .session.active { color: var(--accent); border-color: #00ff8870; background: #00ff880b; box-shadow: var(--shadow-neon-sm); }
     .session strong, .session span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .session strong { font-size: 12px; }
     .session span { margin-top: 4px; font: 10px "Share Tech Mono", monospace; color: var(--muted-foreground); }
-    .footer {
-      margin-top: auto;
-      border-top: 1px solid var(--border);
-      padding: 13px 8px 0;
-      color: var(--muted-foreground);
-      font: 10px/1.7 "Share Tech Mono", monospace;
-      letter-spacing: .08em;
-    }
-    main { display:flex; min-width:0; max-height:100vh; flex-direction:column; background:#0a0a0fc9; }
-    .top {
-      min-height: 72px;
-      border-bottom: 1px solid var(--border);
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap: 18px;
-      padding: 15px 28px;
-      background: #0c0c13dd;
-      box-shadow: 0 1px 0 #00ff8810;
-    }
-    .top > span:first-child { font-size: 11px; color: #8d95a3; text-transform: uppercase; letter-spacing: .12em; }
-    .top b { color: var(--accent); font: 11px "Share Tech Mono", monospace; text-shadow: 0 0 6px #00ff8850; }
-    .online { font: 10px "Share Tech Mono", monospace; color: var(--muted-foreground); text-transform:uppercase; letter-spacing:.1em; }
+    .footer { margin-top: auto; flex: 0 0 auto; border-top: 1px solid var(--border); padding: 13px 8px 0; color: var(--muted-foreground); font: 10px/1.7 "Share Tech Mono", monospace; letter-spacing: .08em; }
+    main { display:flex; min-width:0; min-height:0; max-height:100vh; flex-direction:column; background:#0a0a0fc9; }
+    .top { min-height:72px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:18px; padding:15px 28px; background:#0c0c13dd; box-shadow:0 1px 0 #00ff8810; }
+    .top > span:first-child { font-size:11px; color:#8d95a3; text-transform:uppercase; letter-spacing:.12em; }
+    .top b { color:var(--accent); font:11px "Share Tech Mono",monospace; text-shadow:0 0 6px #00ff8850; }
+    .online { font:10px "Share Tech Mono",monospace; color:var(--muted-foreground); text-transform:uppercase; letter-spacing:.1em; }
     .online:before { content:""; display:inline-block; width:7px; height:7px; margin-right:8px; background:var(--accent); box-shadow:0 0 0 3px #00ff8817, var(--shadow-neon-sm); }
-    .chat { flex:1; overflow:auto; padding: 46px clamp(24px,7vw,105px) 24px; }
-    .hero { max-width:700px; margin: 8vh auto 42px; position:relative; }
+    .chat { flex:1; min-height:0; overflow:auto; padding:46px clamp(24px,7vw,105px) 24px; }
+    .hero { max-width:700px; margin:8vh auto 42px; position:relative; }
     .hero::after { content:""; position:absolute; width:80px; height:1px; bottom:-20px; left:0; background:var(--accent-secondary); box-shadow:var(--shadow-magenta); }
-    .eyebrow { font: 11px "Share Tech Mono", monospace; text-transform:uppercase; letter-spacing:.22em; color:var(--accent-tertiary); text-shadow:0 0 8px #00d4ff55; }
-    h1 {
-      font: 900 clamp(40px,5vw,66px)/.96 "Orbitron", "Share Tech Mono", monospace;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-      margin: 16px 0;
-      color: var(--foreground);
-      text-shadow: -2px 0 #ff00ff45, 2px 0 #00d4ff45, 0 0 18px #00ff8833;
-      animation: glitch 7s steps(1) infinite;
-    }
+    .eyebrow { font:11px "Share Tech Mono",monospace; text-transform:uppercase; letter-spacing:.22em; color:var(--accent-tertiary); text-shadow:0 0 8px #00d4ff55; }
+    h1 { font:900 clamp(40px,5vw,66px)/.96 "Orbitron","Share Tech Mono",monospace; letter-spacing:.08em; text-transform:uppercase; margin:16px 0; color:var(--foreground); text-shadow:-2px 0 #ff00ff45,2px 0 #00d4ff45,0 0 18px #00ff8833; animation:glitch 7s steps(1) infinite; }
     p { max-width:560px; color:#8f98a7; font:15px/1.7 "JetBrains Mono",monospace; }
     .messages { max-width:820px; margin:auto; display:grid; gap:16px; }
-    .message {
-      max-width:94%;
-      white-space:pre-wrap;
-      padding:15px 18px;
-      border:1px solid var(--border);
-      clip-path: var(--cut);
-      background: linear-gradient(180deg,#14141d,#101018);
-      color:var(--foreground);
-      font:14px/1.65 "JetBrains Mono",monospace;
-      box-shadow: 0 0 0 1px #ffffff03, 0 10px 30px #00000040;
-    }
-    .message::first-line { text-shadow: 0 0 3px #e0e0e030; }
+    .message { max-width:94%; white-space:pre-wrap; padding:15px 18px; border:1px solid var(--border); clip-path:var(--cut); background:linear-gradient(180deg,#14141d,#101018); color:var(--foreground); font:14px/1.65 "JetBrains Mono",monospace; box-shadow:0 0 0 1px #ffffff03,0 10px 30px #00000040; }
+    .message::first-line { text-shadow:0 0 3px #e0e0e030; }
     .message.user { justify-self:end; background:#0f2019; border-color:#00ff8855; box-shadow:var(--shadow-neon-sm); }
     .message.error { background:#241019; border-color:#ff336680; color:#ffb3c1; box-shadow:0 0 7px #ff336622; }
     .pending { color:#8c94a2; font-style:italic; }
@@ -205,72 +109,21 @@
     .tool code { display:block; margin-top:4px; white-space:pre-wrap; word-break:break-word; color:#727988; font:11px/1.45 "JetBrains Mono",monospace; }
     .empty-work { padding:0 13px 12px; color:var(--muted-foreground); font:12px "Share Tech Mono",monospace; }
     .compose-wrap { padding:8px clamp(24px,7vw,105px) 28px; background:linear-gradient(transparent,#0a0a0f 28%); }
-    form {
-      max-width:820px;
-      margin:auto;
-      padding:10px;
-      background:#0d0d14;
-      border:1px solid var(--border);
-      clip-path:var(--cut);
-      box-shadow:0 0 0 1px #00ff8810, 0 12px 35px #00000060;
-    }
-    textarea {
-      width:100%;
-      min-height:53px;
-      padding:9px 10px;
-      border:1px solid transparent;
-      resize:none;
-      outline:0;
-      background:#0a0a0f;
-      color:var(--foreground);
-      font:14px/1.55 "JetBrains Mono",monospace;
-      clip-path:var(--cut-sm);
-    }
+    form { max-width:820px; margin:auto; padding:10px; background:#0d0d14; border:1px solid var(--border); clip-path:var(--cut); box-shadow:0 0 0 1px #00ff8810,0 12px 35px #00000060; }
+    textarea { width:100%; min-height:53px; padding:9px 10px; border:1px solid transparent; resize:none; outline:0; background:#0a0a0f; color:var(--foreground); font:14px/1.55 "JetBrains Mono",monospace; clip-path:var(--cut-sm); }
     textarea::placeholder { color:#555b68; }
     textarea:focus { border-color:var(--accent); box-shadow:var(--shadow-neon-sm); }
     textarea:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
     .compose-bottom { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:8px; }
-    .model {
-      flex:1;
-      min-height:44px;
-      max-width:72%;
-      background:#101018;
-      border:1px solid var(--border);
-      color:var(--accent);
-      clip-path:var(--cut-sm);
-      padding:8px 10px;
-      font:11px "Share Tech Mono",monospace;
-      letter-spacing:.06em;
-    }
+    .model { flex:1; min-height:44px; max-width:72%; background:#101018; border:1px solid var(--border); color:var(--accent); clip-path:var(--cut-sm); padding:8px 10px; font:11px "Share Tech Mono",monospace; letter-spacing:.06em; }
     .model:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-    .send {
-      min-height:44px;
-      padding:8px 14px;
-      background:var(--accent);
-      color:var(--background);
-      clip-path:var(--cut-sm);
-      font:700 12px "Share Tech Mono",monospace;
-      box-shadow:var(--shadow-neon);
-    }
+    .send { min-height:44px; padding:8px 14px; background:var(--accent); color:var(--background); clip-path:var(--cut-sm); font:700 12px "Share Tech Mono",monospace; box-shadow:var(--shadow-neon); }
     .send:hover { filter:brightness(1.12); transform:translate(-1px,-1px); }
     .send:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
     .send:disabled { opacity:.55; transform:none; }
-    .side {
-      background:#0c0c13ee;
-      border-left:1px solid var(--border);
-      padding:20px 16px;
-      overflow:auto;
-      box-shadow: inset 1px 0 0 #ff00ff10;
-    }
+    .side { height:100vh; min-height:0; overflow-y:auto; overflow-x:hidden; background:#0c0c13ee; border-left:1px solid var(--border); padding:20px 16px; box-shadow:inset 1px 0 0 #ff00ff10; scrollbar-width:thin; scrollbar-color:#ff00ff55 transparent; }
     .side h2 { margin:1px 0 18px; color:var(--accent-secondary); font:700 13px "Orbitron",monospace; letter-spacing:.16em; text-transform:uppercase; text-shadow:var(--shadow-magenta); }
-    .card {
-      background:#12121a;
-      border:1px solid var(--border);
-      clip-path:var(--cut);
-      padding:14px;
-      margin-bottom:14px;
-      box-shadow:0 8px 24px #00000045;
-    }
+    .card { background:#12121a; border:1px solid var(--border); clip-path:var(--cut); padding:14px; margin-bottom:14px; box-shadow:0 8px 24px #00000045; }
     .card h3 { margin:0 0 10px; color:#727988; font:10px "Share Tech Mono",monospace; letter-spacing:.16em; text-transform:uppercase; }
     .metric { display:flex; justify-content:space-between; gap:12px; border-top:1px solid #232332; padding:8px 0; color:#9ca3af; font-size:12px; }
     .metric:first-of-type { border:0; padding-top:0; }
@@ -281,58 +134,45 @@
     .activity span { display:block; margin-top:3px; color:#6b7280; font:10px "Share Tech Mono",monospace; }
     .agent { position:relative; padding:0 0 10px 15px; font-size:12px; color:#d1d5db; }
     .agent:before { content:""; position:absolute; left:0; top:5px; width:7px; height:7px; background:#4b5563; }
+    .agent.queued:before { background:var(--accent-tertiary); box-shadow:var(--shadow-cyan); }
     .agent.running:before { background:var(--accent-secondary); box-shadow:var(--shadow-magenta); }
     .agent.completed:before { background:var(--accent); box-shadow:var(--shadow-neon-sm); }
     .agent.failed:before { background:var(--destructive); box-shadow:0 0 6px #ff336650; }
+    .agent.cancelled:before { background:#6b7280; }
     .agent strong,.agent span { display:block; }
     .agent strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .agent span { margin-top:3px; color:var(--muted-foreground); font:10px "Share Tech Mono",monospace; }
+    .agent-history { margin-top:4px; border-top:1px solid #232332; padding-top:10px; }
+    .agent-history summary { cursor:pointer; color:#8f98a7; font:10px "Share Tech Mono",monospace; text-transform:uppercase; letter-spacing:.12em; }
+    .agent-history summary:hover { color:var(--accent-secondary); }
+    .agent-history-list { margin-top:10px; display:grid; gap:4px; }
     .side p { font-size:11px; color:#727988; }
-    @keyframes glitch {
-      0%, 88%, 100% { transform:translate(0); }
-      90% { transform:translate(-2px,1px) skewX(-2deg); }
-      91% { transform:translate(2px,-1px) skewX(2deg); }
-      92% { transform:translate(0); }
-    }
-    @keyframes blink { 50% { opacity:0; } }
+    @keyframes glitch { 0%,88%,100% { transform:translate(0); } 90% { transform:translate(-2px,1px) skewX(-2deg); } 91% { transform:translate(2px,-1px) skewX(2deg); } 92% { transform:translate(0); } }
     @media(max-width:960px) { .app { grid-template-columns:220px minmax(0,1fr); } .side { display:none; } }
-    @media(max-width:640px) {
-      body { overflow:auto; }
-      .app { display:block; min-height:100vh; }
-      .rail { display:none; }
-      .top { min-height:64px; padding:13px 16px; }
-      .top > span:first-child { font-size:9px; }
-      .chat { padding:27px 16px 18px; }
-      .hero { margin:3vh auto 28px; }
-      h1 { font-size:clamp(34px,12vw,52px); letter-spacing:.04em; }
-      .message,.trace { max-width:100%; }
-      .compose-wrap { padding:8px 14px 16px; }
-      .compose-bottom { align-items:stretch; }
-      .model { max-width:none; min-width:0; }
-      .send { padding-inline:12px; }
-    }
-    @media(prefers-reduced-motion:reduce) {
-      *, *::before, *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
-    }
+    @media(max-width:640px) { body { overflow:auto; } .app { display:block; min-height:100vh; height:auto; } .rail { display:none; } .top { min-height:64px; padding:13px 16px; } .top > span:first-child { font-size:9px; } .chat { padding:27px 16px 18px; } .hero { margin:3vh auto 28px; } h1 { font-size:clamp(34px,12vw,52px); letter-spacing:.04em; } .message,.trace { max-width:100%; } .compose-wrap { padding:8px 14px 16px; } .compose-bottom { align-items:stretch; } .model { max-width:none; min-width:0; } .send { padding-inline:12px; } }
+    @media(prefers-reduced-motion:reduce) { *, *::before, *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
   </style>
 </head>
 <body>
   <div class="app">
     <aside class="rail"><div class="brand"><span class="mark">⌁</span>claw code</div><button class="new" id="new">+ New conversation</button><div class="label">Saved sessions</div><div id="sessions" class="sessions"></div><div class="footer">LOCAL WEB CLIENT<br>127.0.0.1 ONLY</div></aside>
     <main><header class="top"><span>Workspace <b id="name">starting...</b></span><span class="online" id="runtime">local runtime · checking...</span></header><section id="chat" class="chat"><div class="hero" id="hero"><div class="eyebrow">A quiet place to ship</div><h1>What are we building?</h1><p>Explore a codebase, ask for a plan, or hand a real task to your configured Claw model.</p></div><div id="messages" class="messages"></div></section><div class="compose-wrap"><form id="form"><textarea id="prompt" rows="2" placeholder="Ask Claw to inspect, plan, code, or verify..."></textarea><div class="compose-bottom"><select id="model" class="model"><option value="nvidia-fast">NVIDIA · Fast</option><option value="nvidia-plan">NVIDIA · Planner</option><option value="nvidia-agent">NVIDIA · Agent</option><option value="nvidia-long">NVIDIA · Long context</option><option value="gemini-flash">Gemini · Flash</option><option value="gemini-pro">Gemini · Pro</option></select><button id="send" class="send">Send ↵</button></div></form></div></main>
-    <aside class="side"><h2>Runbook</h2><div class="card"><h3>Session</h3><div class="metric"><span>Model</span><b id="active">nvidia-agent</b></div><div class="metric"><span>Messages</span><b id="count">0</b></div><div class="metric"><span>Storage</span><b>persistent</b></div></div><div class="card"><h3>Agents</h3><div id="agents"><div class="agent"><strong>No agents yet</strong><span>Ask Claw to delegate a task</span></div></div></div><div class="card"><h3>Latest activity</h3><div id="activity"><div class="activity">Ready for a prompt<span>local store enabled</span></div></div></div><div class="card"><h3>Tip</h3><p style="font-size:13px;margin:0">Expand a work log to inspect the exact tool calls and results behind an answer.</p></div></aside>
+    <aside class="side"><h2>Runbook</h2><div class="card"><h3>Session</h3><div class="metric"><span>Model</span><b id="active">nvidia-agent</b></div><div class="metric"><span>Messages</span><b id="count">0</b></div><div class="metric"><span>Storage</span><b>persistent</b></div></div><div class="card"><h3>Agents</h3><div id="agents"><div class="agent"><strong>No active agents</strong><span>Ask Claw to delegate a task</span></div></div><details class="agent-history"><summary>History · <span id="history-count">0</span></summary><div id="agent-history" class="agent-history-list"></div></details></div><div class="card"><h3>Latest activity</h3><div id="activity"><div class="activity">Ready for a prompt<span>local store enabled</span></div></div></div><div class="card"><h3>Tip</h3><p style="font-size:13px;margin:0">Expand a work log to inspect the exact tool calls and results behind an answer.</p></div></aside>
   </div>
   <script>
     const $ = id => document.getElementById(id);
-    const state = { id: null, runs: [] };
+    const state = { id: null, runs: [], agents: [] };
     function text(message) { return (message.blocks || []).map(block => block.text || '').filter(Boolean).join('\n').trim(); }
+    function isActiveAgent(agent) { return agent.status === 'queued' || agent.status === 'running'; }
+    function updateAgentCounts() { const active = state.agents.filter(isActiveAgent).length; const history = Math.max(0, state.agents.length - active); $('history-count').textContent = history; return { active, history }; }
     async function loadModels() { const data = await fetch('/models').then(response => response.json()); const select = $('model'); const previous = select.value; select.innerHTML = ''; data.models.filter(model => !model.alias.startsWith('claude-')).forEach(model => { const option = document.createElement('option'); option.value = model.alias; option.textContent = `${model.label} · ${model.model}`; select.append(option); }); select.value = [...select.options].some(option => option.value === previous) ? previous : 'nvidia-agent'; $('active').textContent = select.value; }
-    async function refreshRuntimeStatus() { const response = await fetch('/status'); if (!response.ok) throw Error('Runtime status unavailable'); const data = await response.json(); const sessionLabel = data.session_count === 1 ? 'session' : 'sessions'; const agentLabel = data.agent_count === 1 ? 'agent' : 'agents'; $('runtime').textContent = `${data.status} · ${data.session_count} ${sessionLabel} · ${data.message_count} messages · ${data.model_count} models · ${data.agent_count} ${agentLabel}`; }
+    async function refreshRuntimeStatus() { const [statusResponse, agentsResponse] = await Promise.all([fetch('/status'), fetch('/agents')]); if (!statusResponse.ok) throw Error('Runtime status unavailable'); const data = await statusResponse.json(); if (agentsResponse.ok) { const agentsData = await agentsResponse.json(); state.agents = agentsData.agents || []; } const counts = updateAgentCounts(); const sessionLabel = data.session_count === 1 ? 'session' : 'sessions'; $('runtime').textContent = `${data.status} · ${data.session_count} ${sessionLabel} · ${data.message_count} messages · ${data.model_count} models · ${counts.active} active agents`; }
     function role(message) { return String(message.role || '').toLowerCase(); }
     function addMessage(message, kind) { const node = document.createElement('article'); node.className = `message ${kind}`; node.textContent = text(message) || '(no text output)'; $('messages').append(node); return node; }
     function addWork(run) { const details = document.createElement('details'); details.className = 'trace'; const summary = document.createElement('summary'); summary.textContent = `Work log · ${run.activities.length} tool event${run.activities.length === 1 ? '' : 's'} · ${run.model}`; details.append(summary); const list = document.createElement('div'); list.className = 'trace-list'; if (!run.activities.length) { const empty = document.createElement('div'); empty.className = 'empty-work'; empty.textContent = 'No tools were needed for this response.'; list.append(empty); } run.activities.forEach(activity => { const item = document.createElement('div'); item.className = `tool ${activity.is_error ? 'error' : ''}`; const label = document.createElement('b'); label.textContent = `${activity.kind === 'tool_result' ? 'result' : 'tool'} · ${activity.label}`; const detail = document.createElement('code'); detail.textContent = activity.detail || '(no output)'; item.append(label, detail); list.append(item); }); details.append(list); $('messages').append(details); }
     function setActivity(run) { const root = $('activity'); root.innerHTML = ''; const activities = run ? run.activities : []; if (!activities.length) { root.innerHTML = '<div class="activity">Ready for a prompt<span>no tool activity yet</span></div>'; return; } activities.slice(-8).reverse().forEach(activity => { const node = document.createElement('div'); node.className = `activity ${activity.is_error ? 'error' : ''}`; node.textContent = activity.label; const detail = document.createElement('span'); detail.textContent = activity.detail || activity.kind; node.append(detail); root.append(node); }); }
-    async function refreshAgents() { const response = await fetch('/agents'); if (!response.ok) return; const data = await response.json(); const root = $('agents'); root.innerHTML = ''; if (!data.agents.length) { const empty = document.createElement('div'); empty.className = 'agent'; const title = document.createElement('strong'); title.textContent = 'No agents yet'; const detail = document.createElement('span'); detail.textContent = 'Ask Claw to delegate a task'; empty.append(title, detail); root.append(empty); return; } data.agents.slice(0, 8).forEach(agent => { const node = document.createElement('div'); node.className = `agent ${agent.status}`; const title = document.createElement('strong'); title.textContent = agent.name || agent.subagentType || agent.agentId; const detail = document.createElement('span'); detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`; node.append(title, detail); root.append(node); }); }
+    function renderAgent(agent) { const node = document.createElement('div'); node.className = `agent ${agent.status}`; const title = document.createElement('strong'); title.textContent = agent.name || agent.subagentType || agent.agentId; const detail = document.createElement('span'); detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`; node.append(title, detail); return node; }
+    async function refreshAgents() { const response = await fetch('/agents'); if (!response.ok) return; const data = await response.json(); state.agents = data.agents || []; const active = state.agents.filter(isActiveAgent); const history = state.agents.filter(agent => !isActiveAgent(agent)); const root = $('agents'); root.innerHTML = ''; if (!active.length) { const empty = document.createElement('div'); empty.className = 'agent'; const title = document.createElement('strong'); title.textContent = 'No active agents'; const detail = document.createElement('span'); detail.textContent = 'Ask Claw to delegate a task'; empty.append(title, detail); root.append(empty); } else { active.slice(0, 8).forEach(agent => root.append(renderAgent(agent))); } const historyRoot = $('agent-history'); historyRoot.innerHTML = ''; if (!history.length) { const empty = document.createElement('div'); empty.className = 'agent'; const title = document.createElement('strong'); title.textContent = 'No completed history'; const detail = document.createElement('span'); detail.textContent = 'Finished agent runs will appear here'; empty.append(title, detail); historyRoot.append(empty); } else { history.slice(0, 20).forEach(agent => historyRoot.append(renderAgent(agent))); } updateAgentCounts(); }
     function scrollChat() { $('chat').scrollTop = $('chat').scrollHeight; }
     async function refreshSessions() { const data = await fetch('/sessions').then(response => response.json()); const root = $('sessions'); root.innerHTML = ''; data.sessions.slice().reverse().forEach(session => { const node = document.createElement('button'); node.className = `session ${session.id === state.id ? 'active' : ''}`; const title = document.createElement('strong'); title.textContent = session.id; const detail = document.createElement('span'); detail.textContent = `${session.message_count} messages`; node.append(title, detail); node.onclick = () => load(session.id); root.append(node); }); }
     function renderSession(data) { state.runs = data.runs || []; $('name').textContent = data.id; $('messages').innerHTML = ''; let run = 0; data.session.messages.forEach(message => { if (role(message) === 'assistant') { addWork(state.runs[run++] || { model: 'unknown', activities: [] }); addMessage(message, 'assistant'); } else { addMessage(message, 'user'); } }); $('hero').style.display = data.session.messages.length ? 'none' : ''; $('count').textContent = data.session.messages.length; setActivity(state.runs.at(-1)); scrollChat(); }
@@ -340,7 +180,7 @@
     async function load(id) { const response = await fetch(`/sessions/${id}`); if (!response.ok) throw Error('Could not load this session'); state.id = id; renderSession(await response.json()); await refreshSessions(); }
     $('new').onclick = () => create().catch(showFailure); $('model').onchange = () => { $('active').textContent = $('model').value; };
     function showFailure(error) { const message = error.message || String(error); setActivity({ activities: [{ label: 'Run failed', detail: message, is_error: true }] }); $('name').textContent = 'offline'; }
-    $('form').onsubmit = async event => { event.preventDefault(); const prompt = $('prompt').value.trim(); const model = $('model').value; if (!prompt) return; if (!state.id) await create(); $('hero').style.display = 'none'; addMessage({ blocks: [{ text: prompt }] }, 'user'); const pending = addMessage({ blocks: [{ text: 'Claw is working...' }] }, 'assistant'); pending.classList.add('pending'); $('prompt').value = ''; $('send').disabled = true; setActivity({ activities: [{ label: `Running ${model}`, detail: 'Waiting for Claw tool activity', is_error: false }] }); scrollChat(); try { const response = await fetch(`/sessions/${state.id}/prompt`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, model }) }); const data = await response.json(); pending.remove(); if (!response.ok) throw Error(data.error || 'Prompt failed'); addWork(data.run); addMessage(data.message, 'assistant'); state.runs.push(data.run); setActivity(data.run); $('count').textContent = Number($('count').textContent) + 2; await refreshSessions(); } catch (error) { pending.textContent = error.message; pending.classList.remove('pending'); pending.classList.add('error'); setActivity({ activities: [{ label: 'Run failed', detail: error.message, is_error: true }] }); } finally { $('send').disabled = false; $('prompt').focus(); scrollChat(); } };
+    $('form').onsubmit = async event => { event.preventDefault(); const prompt = $('prompt').value.trim(); const model = $('model').value; if (!prompt) return; if (!state.id) await create(); $('hero').style.display = 'none'; addMessage({ blocks: [{ text: prompt }] }, 'user'); const pending = addMessage({ blocks: [{ text: 'Claw is working...' }] }, 'assistant'); pending.classList.add('pending'); $('prompt').value = ''; $('send').disabled = true; setActivity({ activities: [{ label: `Running ${model}`, detail: 'Waiting for Claw tool activity', is_error: false }] }); scrollChat(); try { const response = await fetch(`/sessions/${state.id}/prompt`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, model }) }); const data = await response.json(); pending.remove(); if (!response.ok) throw Error(data.error || 'Prompt failed'); addWork(data.run); addMessage(data.message, 'assistant'); state.runs.push(data.run); setActivity(data.run); $('count').textContent = Number($('count').textContent) + 2; await refreshSessions(); await refreshAgents(); } catch (error) { pending.textContent = error.message; pending.classList.remove('pending'); pending.classList.add('error'); setActivity({ activities: [{ label: 'Run failed', detail: error.message, is_error: true }] }); } finally { $('send').disabled = false; $('prompt').focus(); scrollChat(); } };
     setInterval(() => refreshAgents().catch(() => {}), 2500);
     setInterval(() => refreshRuntimeStatus().catch(() => { $('runtime').textContent = 'runtime unavailable'; }), 5000);
     refreshAgents().catch(() => {});
