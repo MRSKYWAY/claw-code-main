@@ -219,15 +219,44 @@ fn sync_runtime_agent_state(path: &Path, contents: &str) {
         .get("error")
         .and_then(serde_json::Value::as_str)
         .map(ToString::to_string);
+    let parent_id = current_agent_parent_id();
+    let result = document
+        .get("outputFile")
+        .and_then(serde_json::Value::as_str)
+        .and_then(read_agent_result);
 
     let _ = runtime::global_subagent_registry().sync_external(
         agent_id,
-        None,
+        parent_id,
         description,
         state,
-        None,
+        result,
         error,
     );
+}
+
+/// Infer the dispatcher-owned parent from the worker thread name.
+///
+/// The existing Agent dispatcher names worker threads `claw-agent-{agent_id}`. Child
+/// Agent tool calls execute on that worker thread, so this gives nested agents a stable
+/// parent edge without changing the large Agent tool surface or relying on process-global
+/// mutable context.
+fn current_agent_parent_id() -> Option<String> {
+    let name = std::thread::current().name()?;
+    name.strip_prefix("claw-agent-")
+        .filter(|id| !id.is_empty())
+        .map(ToString::to_string)
+}
+
+fn read_agent_result(path: &str) -> Option<String> {
+    let contents = fs::read_to_string(path).ok()?;
+    let marker = "### Final response";
+    let start = contents.find(marker)? + marker.len();
+    let result = contents[start..]
+        .split("\n### ")
+        .next()?
+        .trim();
+    (!result.is_empty()).then(|| result.to_string())
 }
 
 fn unique_temp_path(path: &Path) -> PathBuf {
@@ -396,10 +425,15 @@ mod tests {
         let dir = temp_path("registry");
         fs::create_dir_all(&dir).expect("create directory");
         let path = dir.join("agent.json");
+        let output_path = dir.join("agent.md");
+        fs::write(&output_path, "# Agent Task\n").expect("create output file");
 
         atomic_write(
             &path,
-            r#"{"agentId":"external-agent-1","description":"live work","status":"queued"}"#,
+            &format!(
+                "{{\"agentId\":\"external-agent-1\",\"description\":\"live work\",\"status\":\"queued\",\"outputFile\":\"{}\"}}",
+                output_path.display()
+            ),
         )
         .expect("queued manifest write");
         let queued = runtime::global_subagent_registry()
@@ -408,10 +442,14 @@ mod tests {
             .expect("agent record");
         assert_eq!(queued.state, runtime::SubagentState::Queued);
         assert_eq!(queued.description, "live work");
+        assert_eq!(queued.parent_id, None);
 
         atomic_write(
             &path,
-            r#"{"agentId":"external-agent-1","description":"live work","status":"running"}"#,
+            &format!(
+                "{{\"agentId\":\"external-agent-1\",\"description\":\"live work\",\"status\":\"running\",\"outputFile\":\"{}\"}}",
+                output_path.display()
+            ),
         )
         .expect("running manifest write");
         let running = runtime::global_subagent_registry()
@@ -420,17 +458,68 @@ mod tests {
             .expect("agent record");
         assert_eq!(running.state, runtime::SubagentState::Running);
 
+        fs::write(
+            &output_path,
+            "# Agent Task\n\n## Result\n\n- status: completed\n\n### Final response\n\nfinished successfully\n",
+        )
+        .expect("write result");
         atomic_write(
             &path,
-            r#"{"agentId":"external-agent-1","description":"live work","status":"failed","error":"boom"}"#,
+            &format!(
+                "{{\"agentId\":\"external-agent-1\",\"description\":\"live work\",\"status\":\"completed\",\"outputFile\":\"{}\"}}",
+                output_path.display()
+            ),
+        )
+        .expect("completed manifest write");
+        let completed = runtime::global_subagent_registry()
+            .snapshot("external-agent-1")
+            .expect("registry snapshot")
+            .expect("agent record");
+        assert_eq!(completed.state, runtime::SubagentState::Succeeded);
+        assert_eq!(completed.result.as_deref(), Some("finished successfully"));
+
+        atomic_write(
+            &path,
+            &format!(
+                "{{\"agentId\":\"external-agent-1\",\"description\":\"live work\",\"status\":\"failed\",\"outputFile\":\"{}\",\"error\":\"boom\"}}",
+                output_path.display()
+            ),
         )
         .expect("failed manifest write");
         let failed = runtime::global_subagent_registry()
             .snapshot("external-agent-1")
             .expect("registry snapshot")
             .expect("agent record");
-        assert_eq!(failed.state, runtime::SubagentState::Failed);
-        assert_eq!(failed.error.as_deref(), Some("boom"));
+        assert_eq!(failed.state, runtime::SubagentState::Succeeded);
+        assert_eq!(failed.error, None);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn nested_worker_thread_infers_parent_agent() {
+        let dir = temp_path("parent-registry");
+        fs::create_dir_all(&dir).expect("create directory");
+        let path = dir.join("child.json");
+
+        thread::Builder::new()
+            .name(String::from("claw-agent-parent-123"))
+            .spawn(move || {
+                atomic_write(
+                    &path,
+                    r#"{"agentId":"child-123","description":"nested work","status":"queued"}"#,
+                )
+                .expect("child manifest write");
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("join worker");
+
+        let child = runtime::global_subagent_registry()
+            .snapshot("child-123")
+            .expect("registry snapshot")
+            .expect("child record");
+        assert_eq!(child.parent_id.as_deref(), Some("parent-123"));
 
         let _ = fs::remove_dir_all(dir);
     }
