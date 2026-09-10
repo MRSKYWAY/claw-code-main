@@ -15,165 +15,20 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: phase-9d-mcp-slash-command
-      - name: Patch MCP command surface
+      - name: Apply patch helper
+        run: python3 phase-9d-patch.py
+      - name: Validate patch
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          commands = Path('rust/crates/commands/src/lib.rs')
-          text = commands.read_text()
-
-          text = text.replace(
-              'pub use hooks::handle_hooks_slash_command;\n',
-              'pub use hooks::handle_hooks_slash_command;\n\nuse std::fmt::Write as _;\nuse runtime::{ConfigLoader, ConfigSource, McpServerConfig, McpTransport, ScopedMcpServerConfig};\n'
-          )
-          text = text.replace(
-              '    SlashCommandSpec {\n        name: "hooks",',
-              '    SlashCommandSpec {\n        name: "mcp",\n        aliases: &[],\n        summary: "Inspect configured MCP servers",\n        argument_hint: None,\n        resume_supported: true,\n        category: SlashCommandCategory::Automation,\n    },\n    SlashCommandSpec {\n        name: "hooks",'
-          )
-          text = text.replace(
-              'pub enum SlashCommand {\n    Help,\n    Status,',
-              'pub enum SlashCommand {\n    Help,\n    Status,\n    Mcp, '
-          )
-          text = text.replace(
-              '            "help" => Self::Help,\n            "status" => Self::Status,',
-              '            "help" => Self::Help,\n            "status" => Self::Status,\n            "mcp" => Self::Mcp,'
-          )
-
-          marker = '\nfn remainder_after_command(input: &str, command: &str) -> Option<String> {'
-          insert = r'''
-
-#[must_use]
-pub fn render_mcp_report(
-    servers: &std::collections::BTreeMap<String, ScopedMcpServerConfig>,
-) -> String {
-    let mut lines = vec![
-        "MCP servers".to_string(),
-        format!("  Configured       {}", servers.len()),
-    ];
-
-    if servers.is_empty() {
-        lines.push("  No MCP servers are configured.".to_string());
-        lines.push(
-            "  Add a server to project/user Claw settings, then rerun this command.".to_string(),
-        );
-        return lines.join("\n");
-    }
-
-    lines.push(String::new());
-    lines.push("Configured servers".to_string());
-    for (name, server) in servers {
-        let scope = match server.scope {
-            ConfigSource::User => "user",
-            ConfigSource::Project => "project",
-            ConfigSource::Local => "local",
-        };
-        let transport = match server.transport() {
-            McpTransport::Stdio => "stdio",
-            McpTransport::Sse => "sse",
-            McpTransport::Http => "http",
-            McpTransport::Ws => "websocket",
-            McpTransport::Sdk => "sdk",
-            McpTransport::ManagedProxy => "managed-proxy",
-        };
-        lines.push(format!("  {name:<24} {transport:<14} scope={scope}"));
-        match &server.config {
-            McpServerConfig::Stdio(config) => {
-                let mut command = config.command.clone();
-                for arg in &config.args {
-                    let _ = write!(command, " {arg}");
-                }
-                lines.push(format!("    target           {command}"));
-            }
-            McpServerConfig::Sse(config) | McpServerConfig::Http(config) => {
-                lines.push(format!("    target           {}", config.url));
-            }
-            McpServerConfig::Ws(config) => {
-                lines.push(format!("    target           {}", config.url));
-            }
-            McpServerConfig::Sdk(config) => {
-                lines.push(format!("    target           {}", config.name));
-            }
-            McpServerConfig::ManagedProxy(config) => {
-                lines.push(format!("    target           {} ({})", config.url, config.id));
-            }
-        }
-    }
-
-    lines.join("\n")
-}
-'''
-          if 'pub fn render_mcp_report(' not in text:
-              text = text.replace(marker, insert + marker)
-
-          # Add direct parser regression.
-          needle = '    fn parses_resume_and_config_slash_commands() {'
-          test = '''    #[test]\n    fn parses_mcp_slash_command() {\n        assert_eq!(SlashCommand::parse("/mcp"), Some(SlashCommand::Mcp));\n        assert!(slash_command_specs().iter().any(|spec| spec.name == "mcp"));\n    }\n\n'''
-          text = text.replace(needle, test + needle)
-
-          commands.write_text(text)
-
-          cli = Path('rust/crates/claw-cli/src/main.rs')
-          text = cli.read_text()
-          text = text.replace(
-              'use commands::{\n    handle_agents_slash_command, handle_hooks_slash_command, handle_plugins_slash_command,\n',
-              'use commands::{\n    handle_agents_slash_command, handle_hooks_slash_command, handle_plugins_slash_command,\n'
-          )
-          text = text.replace(
-              '    handle_skills_slash_command, render_slash_command_help, resume_supported_slash_commands,\n',
-              '    handle_skills_slash_command, render_mcp_report, render_slash_command_help,\n    resume_supported_slash_commands,\n'
-          )
-          text = text.replace(
-              '            SlashCommand::Status => {\n                self.print_status();\n                false\n            }',
-              '            SlashCommand::Status => {\n                self.print_status();\n                false\n            }\n            SlashCommand::Mcp => {\n                Self::print_mcp()?;\n                false\n            }'
-          )
-          text = text.replace(
-              '    fn print_config(section: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {',
-              '    fn print_mcp() -> Result<(), Box<dyn std::error::Error>> {\n        let cwd = env::current_dir()?;\n        let config = ConfigLoader::default_for(&cwd).load()?;\n        println!("{}", render_mcp_report(config.mcp().servers()));\n        Ok(())\n    }\n\n    fn print_config(section: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {'
-          )
-          text = text.replace(
-              '        SlashCommand::Config { section } => Ok(ResumeCommandOutcome {',
-              '        SlashCommand::Config { section } => Ok(ResumeCommandOutcome {'
-          )
-          text = text.replace(
-              '        SlashCommand::Bughunter { .. }\n        | SlashCommand::Branch { .. }',
-              '        SlashCommand::Mcp => Err("/mcp is not supported in resumed sessions yet".into()),\n        SlashCommand::Bughunter { .. }\n        | SlashCommand::Branch { .. }'
-          )
-
-          # Add CLI regression alongside direct slash parsing tests.
-          needle = '    fn parses_direct_agents_and_skills_slash_commands() {'
-          test = '''    #[test]\n    fn parses_mcp_as_interactive_command() {\n        assert_eq!(\n            super::SlashCommand::parse("/mcp"),\n            Some(super::SlashCommand::Mcp)\n        );\n    }\n\n'''
-          text = text.replace(needle, test + needle)
-          cli.write_text(text)
-
-          parity = Path('PARITY.md')
-          text = parity.read_text()
-          text = text.replace(
-              '- First-class interactive `/mcp`, `/plan`, `/review`, `/tasks`, and related command-family parity',
-              '- First-class interactive `/plan`, `/review`, `/tasks`, and related command-family parity'
-          )
-          text = text.replace(
-              '- Richer interactive MCP connection-manager/UI behavior',
-              '- Richer interactive MCP connection-manager/UI behavior and MCP lifecycle operations'
-          )
-          text = text.replace(
-              '- **Phase 9B:** added local `/hooks add` and `/hooks remove` persistence while preserving merged runtime defaults.\n',
-              '- **Phase 9B:** added local `/hooks add` and `/hooks remove` persistence while preserving merged runtime defaults.\n- **Phase 9D:** wired the runtime-backed MCP inspector into the interactive `/mcp` slash-command registry.\n'
-          )
-          text = text.replace(
-              '1. Finish the MCP command family by wiring the inspector into the interactive `/mcp` slash-command registry.',
-              '1. Expand `/mcp` beyond inspection into connection lifecycle and richer interactive MCP management.'
-          )
-          parity.write_text(text)
-
-          mcp = Path('rust/crates/commands/src/bin/mcp.rs')
-          mcp.write_text('''use std::env;\n\nuse commands::render_mcp_report;\nuse runtime::ConfigLoader;\n\nfn main() -> Result<(), Box<dyn std::error::Error>> {\n    let cwd = env::current_dir()?;\n    let config = ConfigLoader::default_for(&cwd).load()?;\n    println!("{}", render_mcp_report(config.mcp().servers()));\n    Ok(())\n}\n\n#[cfg(test)]\nmod tests {\n    use commands::render_mcp_report;\n    use std::collections::BTreeMap;\n\n    #[test]\n    fn renders_empty_mcp_report() {\n        let report = render_mcp_report(&BTreeMap::new());\n        assert!(report.contains("Configured       0"));\n        assert!(report.contains("No MCP servers are configured."));\n    }\n}\n''')
-          PY
+          cargo fmt --all -- --check
+          cargo check --workspace
+          cargo test -p commands --lib
+          cargo test -p claw-cli --bin claw
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add PARITY.md rust/crates/commands/src/lib.rs rust/crates/commands/src/bin/mcp.rs rust/crates/claw-cli/src/main.rs
+          rm -f phase-9d-patch.py
+          git add PARITY.md rust/crates/commands/src/lib.rs rust/crates/commands/src/bin/mcp.rs rust/crates/claw-cli/src/main.rs phase-9d-patch.py
           git diff --cached --check
           git diff --cached --quiet && exit 0
           git commit -m "Phase 9D: wire interactive MCP slash command"
