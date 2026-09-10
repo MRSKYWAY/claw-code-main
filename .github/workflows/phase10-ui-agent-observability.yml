@@ -1,0 +1,78 @@
+name: Phase 10 UI observability refinement
+
+on:
+  push:
+    branches: [phase-10-ui-agent-observability]
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    if: contains(github.event.head_commit.message, '[skip ci]') == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: phase-10-ui-agent-observability
+      - name: Refine web sidebar and agent observability
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          path = Path('rust/crates/server/src/web.html')
+          text = path.read_text(encoding='utf-8')
+
+          def add_once(pattern, replacement, label):
+              nonlocal text
+              updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'Could not apply {label} replacement')
+              text = updated
+
+          add_once(
+              r'\.rail \{\n      background: linear-gradient\(180deg, #0d0d14f2, #0a0a10e8\);',
+              '.rail {\n      background: linear-gradient(180deg, #0d0d14f2, #0a0a10e8);\n      min-height: 0;\n      overflow: hidden;',
+              'rail overflow',
+          )
+          add_once(
+              r'\.sessions \{ display: grid; gap: 5px; overflow: auto; \}',
+              '.sessions { display: grid; gap: 5px; flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }',
+              'session scroller',
+          )
+          add_once(
+              r'\.side \{\n      background:#0c0c13ee;\n      border-left:1px solid var\(--border\);\n      padding:20px 16px;\n      overflow:auto;',
+              '.side {\n      background:#0c0c13ee;\n      border-left:1px solid var(--border);\n      padding:20px 16px;\n      height:100vh;\n      min-height:0;\n      overflow-y:auto;\n      overflow-x:hidden;\n      overscroll-behavior:contain;\n      scrollbar-width:thin;',
+              'runbook scroller',
+          )
+          add_once(
+              r'\.agent span \{ margin-top:3px; color:var\(--muted-foreground\); font:10px "Share Tech Mono",monospace; \}',
+              '.agent span { margin-top:3px; color:var(--muted-foreground); font:10px "Share Tech Mono",monospace; }\n    .agent-group-label { margin: 2px 0 9px; color: var(--accent-tertiary); font: 10px "Share Tech Mono",monospace; letter-spacing:.14em; text-transform:uppercase; }\n    .agent-group-empty { padding: 4px 0 10px; color:#555b68; font:10px "Share Tech Mono",monospace; }\n    .agent-history { margin-top: 6px; border-top:1px solid #232332; padding-top:8px; }\n    .agent-history summary { cursor:pointer; color:#9ca3af; font:10px "Share Tech Mono",monospace; text-transform:uppercase; letter-spacing:.1em; }\n    .agent-history summary:hover { color:var(--accent); text-shadow:0 0 6px #00ff8840; }\n    .agent-history-list { margin-top:10px; }',
+              'agent grouping styles',
+          )
+          add_once(
+              r'async function refreshRuntimeStatus\(\) \{.*?\n    \}\n    function role',
+              '''async function refreshRuntimeStatus() {\n      const [statusResponse, agentsResponse] = await Promise.all([fetch('/status'), fetch('/agents')]);\n      if (!statusResponse.ok) throw Error('Runtime status unavailable');\n      const data = await statusResponse.json();\n      const agents = agentsResponse.ok ? await agentsResponse.json() : { agents: [] };\n      const activeAgents = (agents.agents || []).filter(agent => agent.status === 'queued' || agent.status === 'running').length;\n      const sessionLabel = data.session_count === 1 ? 'session' : 'sessions';\n      const activeAgentLabel = activeAgents === 1 ? 'active agent' : 'active agents';\n      $('runtime').textContent = `${data.status} · ${data.session_count} ${sessionLabel} · ${data.message_count} messages · ${data.model_count} models · ${activeAgents} ${activeAgentLabel}`;\n    }\n    function role''',
+              'active agent header',
+          )
+          add_once(
+              r'async function refreshAgents\(\) \{.*?\n    \}\n    function scrollChat',
+              '''async function refreshAgents() {\n      const response = await fetch('/agents');\n      if (!response.ok) return;\n      const data = await response.json();\n      const root = $('agents');\n      root.innerHTML = '';\n      const agents = data.agents || [];\n      const active = agents.filter(agent => agent.status === 'queued' || agent.status === 'running');\n      const history = agents.filter(agent => agent.status !== 'queued' && agent.status !== 'running');\n      const activeLabel = document.createElement('div');\n      activeLabel.className = 'agent-group-label';\n      activeLabel.textContent = `Active · ${active.length}`;\n      root.append(activeLabel);\n      if (!active.length) {\n        const empty = document.createElement('div');\n        empty.className = 'agent-group-empty';\n        empty.textContent = 'No active agents';\n        root.append(empty);\n      } else {\n        active.slice(0, 8).forEach(agent => {\n          const node = document.createElement('div');\n          node.className = `agent ${agent.status}`;\n          const title = document.createElement('strong');\n          title.textContent = agent.name || agent.subagentType || agent.agentId;\n          const detail = document.createElement('span');\n          detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`;\n          node.append(title, detail);\n          root.append(node);\n        });\n      }\n      if (history.length) {\n        const details = document.createElement('details');\n        details.className = 'agent-history';\n        const summary = document.createElement('summary');\n        summary.textContent = `History · ${history.length}`;\n        details.append(summary);\n        const list = document.createElement('div');\n        list.className = 'agent-history-list';\n        history.slice(0, 12).forEach(agent => {\n          const node = document.createElement('div');\n          node.className = `agent ${agent.status}`;\n          const title = document.createElement('strong');\n          title.textContent = agent.name || agent.subagentType || agent.agentId;\n          const detail = document.createElement('span');\n          detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`;\n          node.append(title, detail);\n          list.append(node);\n        });\n        details.append(list);\n        root.append(details);\n      }\n    }\n    function scrollChat''',
+              'agent grouping behavior',
+          )
+
+          path.write_text(text, encoding='utf-8')
+
+          workflow = Path('.github/workflows/phase10-ui-agent-observability.yml')
+          workflow.unlink()
+      - name: Commit refined UI
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust/crates/server/src/web.html .github/workflows/phase10-ui-agent-observability.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "refine web agent observability [skip ci]"
+          git push origin HEAD:phase-10-ui-agent-observability
