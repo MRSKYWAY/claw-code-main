@@ -1,0 +1,58 @@
+name: Phase 10D minimal repair
+
+on:
+  push:
+    branches:
+      - phase-10d-task-inspection-repair
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-10d-task-inspection-repair
+          fetch-depth: 0
+      - name: Fix assertions and task rendering
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('rust/crates/commands/src/lib.rs')
+          s = p.read_text()
+          if 'assert_eq!(slash_command_specs().len(), 30);' in s:
+              s = s.replace('assert_eq!(slash_command_specs().len(), 30);', 'assert_eq!(slash_command_specs().len(), 31);', 1)
+          start = s.index('fn render_task_row(')
+          end = s.index('\nfn render_task_snapshot(', start)
+          new = '''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
+    let parent = snapshot.parent_id.as_deref().unwrap_or("-");
+    let result = snapshot
+        .result
+        .as_deref()
+        .map_or(String::new(), |value| format!("\\n    Result           {value}"));
+    let error = snapshot
+        .error
+        .as_deref()
+        .map_or(String::new(), |value| format!("\\n    Error            {value}"));
+    format!(
+        "  {:<24} {:<11} parent={parent}\\n    {}{result}{error}",
+        snapshot.id,
+        format_task_state(snapshot.state),
+        snapshot.description,
+    )
+}'''
+          s = s[:start] + new + s[end:]
+          p.write_text(s)
+          PY
+      - name: Run targeted test
+        working-directory: rust
+        run: cargo test -p commands tasks_command_parses_and_renders_registry_state --lib
+      - name: Commit fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust/crates/commands/src/lib.rs
+          git commit -m 'fix: complete phase 10d task inspection' || exit 0
+          git push origin HEAD:phase-10d-task-inspection-repair
