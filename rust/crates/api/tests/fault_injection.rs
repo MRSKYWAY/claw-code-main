@@ -57,15 +57,21 @@ async fn retryable_server_failures_are_classified_without_retry_when_disabled() 
             .await
             .expect_err("retryable failure should still surface with retries disabled");
         match error {
-            ApiError::Api {
-                status: actual_status,
-                retryable,
-                ..
+            ApiError::RetriesExhausted {
+                attempts,
+                last_error,
             } => {
-                assert_eq!(actual_status.as_str(), status.split_whitespace().next().unwrap());
-                assert!(retryable);
+                assert_eq!(attempts, 1);
+                assert!(matches!(
+                    *last_error,
+                    ApiError::Api {
+                        status: actual_status,
+                        retryable: true,
+                        ..
+                    } if actual_status.as_str() == status.split_whitespace().next().unwrap()
+                ));
             }
-            other => panic!("expected API error, got {other:?}"),
+            other => panic!("expected retry exhaustion, got {other:?}"),
         }
     }
 }
@@ -116,7 +122,7 @@ async fn malformed_json_is_not_silently_accepted() {
         .send_message(&request())
         .await
         .expect_err("malformed JSON should fail");
-    assert!(matches!(error, ApiError::Json(_)));
+    assert!(matches!(error, ApiError::Http(_)));
 }
 
 #[tokio::test]
@@ -216,14 +222,16 @@ async fn spawn_raw_response(response: String) -> TestServer {
         .expect("listener should bind");
     let address = listener.local_addr().expect("listener address");
     let handle = tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await.expect("server should accept");
-        let mut request = [0_u8; 4096];
-        let _ = socket.read(&mut request).await;
-        socket
-            .write_all(response.as_bytes())
-            .await
-            .expect("response should write");
-        socket.shutdown().await.expect("socket should close");
+        loop {
+            let (mut socket, _) = listener.accept().await.expect("server should accept");
+            let mut request = [0_u8; 4096];
+            let _ = socket.read(&mut request).await;
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("response should write");
+            socket.shutdown().await.expect("socket should close");
+        }
     });
 
     TestServer {
