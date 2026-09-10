@@ -20,7 +20,7 @@ jobs:
           ref: phase-10e-direct-agent-cancellation
           fetch-depth: 0
 
-      - name: Apply Phase 10E cancellation changes
+      - name: Apply Phase 10E and refresh 10D regressions
         shell: python
         run: |
           from pathlib import Path
@@ -62,7 +62,7 @@ jobs:
           s = p.read_text()
           s = s.replace('    RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,\n', '    CancellationToken, RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,\n', 1)
           job_old = '''    let result: Result<String, String> = (|| {\n        let mut runtime = build_agent_runtime(job)?\n            .with_max_iterations(max_iterations_for_subagent(subagent_type));\n        let summary = runtime\n            .run_turn(job.prompt.clone(), None)\n            .map_err(|error| error.to_string())?;\n        Ok(final_assistant_text(&summary))\n    })();\n\n    match result {\n        Ok(final_text) => {'''
-          job_new = '''    let cancellation = runtime::global_subagent_registry()\n        .cancellation_token(&job.manifest.agent_id)\n        .map_err(|error| error.to_string())?;\n    let result: Result<String, String> = (|| {\n        let mut runtime = build_agent_runtime(job)?\n            .with_max_iterations(max_iterations_for_subagent(subagent_type));\n        let summary = runtime\n            .run_turn_with_cancellation(job.prompt.clone(), None, &cancellation)\n            .map_err(|error| error.to_string())?;\n        Ok(final_assistant_text(&summary))\n    })();\n\n    match result {\n        Ok(_final_text) if cancellation.is_cancelled() => persist_agent_terminal_state(\n            &job.manifest,\n            &mut job.lifecycle,\n            AgentStatus::Cancelled,\n            None,\n            None,\n        ),\n        Err(error) if cancellation.is_cancelled() => {\n            persist_agent_terminal_state(\n                &job.manifest,\n                &mut job.lifecycle,\n                AgentStatus::Cancelled,\n                None,\n                None,\n            )\n        }\n        Ok(final_text) => {'''
+          job_new = '''    let cancellation = runtime::global_subagent_registry()\n        .cancellation_token(&job.manifest.agent_id)\n        .map_err(|error| error.to_string())?;\n    let result: Result<String, String> = (|| {\n        let mut runtime = build_agent_runtime(job)?\n            .with_max_iterations(max_iterations_for_subagent(subagent_type));\n        let summary = runtime\n            .run_turn_with_cancellation(job.prompt.clone(), None, &cancellation)\n            .map_err(|error| error.to_string())?;\n        Ok(final_assistant_text(&summary))\n    })();\n\n    match result {\n        Ok(_final_text) if cancellation.is_cancelled() => persist_agent_terminal_state(\n            &job.manifest,\n            &mut job.lifecycle,\n            AgentStatus::Cancelled,\n            None,\n            None,\n        ),\n        Err(_error) if cancellation.is_cancelled() => {\n            persist_agent_terminal_state(\n                &job.manifest,\n                &mut job.lifecycle,\n                AgentStatus::Cancelled,\n                None,\n                None,\n            )\n        }\n        Ok(final_text) => {'''
           if job_old not in s: raise SystemExit('run_agent_job anchor not found')
           s = s.replace(job_old, job_new, 1)
           header_old = '''impl ApiClient for ProviderRuntimeClient {\n    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {'''
@@ -87,6 +87,22 @@ jobs:
           s = s.replace(marker, impl_text + marker, 1)
           p.write_text(s)
 
+          # Fix the stale 10D test expectations that were merged with the feature.
+          p = Path('rust/crates/commands/src/lib.rs')
+          s = p.read_text()
+          s = s.replace('assert_eq!(slash_command_specs().len(), 30);', 'assert_eq!(slash_command_specs().len(), 31);', 1)
+          s = s.replace('assert_eq!(resume_supported_slash_commands().len(), 15);', 'assert_eq!(resume_supported_slash_commands().len(), 16);', 1)
+          start = s.index('fn render_task_row(')
+          end = s.index('\nfn render_task_snapshot(', start)
+          row = '''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {\n    let parent = snapshot.parent_id.as_deref().unwrap_or("-");\n    let result = snapshot\n        .result\n        .as_deref()\n        .map_or(String::new(), |value| format!("\\n    Result           {value}"));\n    let error = snapshot\n        .error\n        .as_deref()\n        .map_or(String::new(), |value| format!("\\n    Error            {value}"));\n    format!(\n        "  {:<24} {:<11} parent={parent}\\n    {}{result}{error}",\n        snapshot.id,\n        format_task_state(snapshot.state),\n        snapshot.description,\n    )\n}'''
+          s = s[:start] + row + s[end:]
+          p.write_text(s)
+
+          p = Path('rust/crates/claw-cli/src/main.rs')
+          s = p.read_text()
+          s = s.replace('"version", "export", "agents", "skills",\n            ]', '"version", "export", "agents", "skills", "tasks",\n            ]', 1)
+          p.write_text(s)
+
           p = Path('PARITY.md')
           s = p.read_text()
           s = s.replace('2. Wire registry cancellation back into external Agent execution so provider work can terminate cooperatively.', '2. **Phase 10E — direct Agent cancellation:** wire registry cancellation back into external Agent execution so provider work can terminate cooperatively.\n3. Expand persistent background-task/session history and session-safe lookup.\n4. Expand structured/remote assistant transport semantics only after the subagent/task model is represented consistently across local execution modes.\n5. Return to richer MCP lifecycle and the broader TypeScript service/tool ecosystem after the subagent architecture is wired through the live dispatcher.', 1)
@@ -94,12 +110,15 @@ jobs:
 
           Path('.github/workflows/phase-10e-bootstrap.yml').unlink()
 
-      - name: Verify Phase 10E code
+      - name: Verify Phase 10E tree
         working-directory: rust
         run: |
           cargo test -p runtime --lib
           cargo test -p commands --lib
           cargo test -p claw-cli --bin claw
+          cargo clippy --workspace --lib --bins
+          cargo clippy -p commands --all-targets
+          cargo check --workspace
 
       - name: Commit clean Phase 10E tree
         shell: bash
@@ -107,6 +126,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add rust/crates/runtime/src/conversation.rs rust/crates/runtime/src/subagent.rs rust/crates/tools/src/lib.rs PARITY.md .github/workflows
+          git add rust/crates/runtime/src/conversation.rs rust/crates/runtime/src/subagent.rs rust/crates/tools/src/lib.rs rust/crates/commands/src/lib.rs rust/crates/claw-cli/src/main.rs PARITY.md .github/workflows
           git commit -m "feat: make external Agent execution cancellable"
           git push origin HEAD:phase-10e-direct-agent-cancellation
