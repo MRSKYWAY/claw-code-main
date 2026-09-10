@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - phase-10d-task-inspection
   pull_request:
     branches:
       - main
@@ -50,15 +51,17 @@ jobs:
         run: cargo build --release
 
   phase-10d-fix:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'phase-10d-task-inspection' && github.actor != 'github-actions[bot]'
+    if: github.event_name == 'push' && github.ref_name == 'phase-10d-task-inspection' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Check out branch
         uses: actions/checkout@v4
         with:
           ref: phase-10d-task-inspection
           fetch-depth: 0
-      - name: Apply targeted fix and remove temporary workflows
+      - name: Apply targeted fix and clean temporary workflows
         run: |
           python3 - <<'PY'
           from pathlib import Path
