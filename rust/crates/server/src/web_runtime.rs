@@ -127,7 +127,7 @@ fn execute_auto(prompt: &str) -> Result<ClawRunResult, super::ApiError> {
     let total_budget = web_run_timeout().min(AUTO_MAX_TOTAL_TIME);
     let scout_timeout = (total_budget / 3).min(AUTO_SCOUT_MAX_TIME);
     let executor_timeout = total_budget.saturating_sub(scout_timeout);
-    let scout_model = auto_scout_model();
+    let scout_model = auto_scout_model()?;
     let scout_prompt = format!(
         "You are the scout in a two-stage coding task. Inspect only enough of the workspace to hand off the task below. Use at most four tool calls and only the supplied read/search tools. Do not use a shell, web search, agents, edits, tests, or broad recursive investigation. Do not retry failures. Return exactly: relevant files, existing behavior, and the smallest next step.\n\nTask:\n{prompt}"
     );
@@ -175,32 +175,28 @@ fn execute_auto(prompt: &str) -> Result<ClawRunResult, super::ApiError> {
     })
 }
 
-fn auto_scout_model() -> &'static str {
+fn auto_scout_model() -> Result<&'static str, super::ApiError> {
     if has_env_key("NVIDIA_API_KEY") {
-        "nvidia-fast"
+        Ok("nvidia-fast")
     } else {
-        "gemini-flash"
+        Err(internal_error("Claw Auto requires NVIDIA_API_KEY"))
     }
 }
 
 fn auto_executor_model(prompt: &str) -> &'static str {
-    if has_env_key("NVIDIA_API_KEY") {
-        let normalized = prompt.to_ascii_lowercase();
-        if [
-            "architecture",
-            "architect",
-            "design a plan",
-            "implementation plan",
-        ]
-        .iter()
-        .any(|term| normalized.contains(term))
-        {
-            "nvidia-plan"
-        } else {
-            "nvidia-agent"
-        }
+    let normalized = prompt.to_ascii_lowercase();
+    if [
+        "architecture",
+        "architect",
+        "design a plan",
+        "implementation plan",
+    ]
+    .iter()
+    .any(|term| normalized.contains(term))
+    {
+        "nvidia-plan"
     } else {
-        "gemini-pro"
+        "nvidia-agent"
     }
 }
 
@@ -446,7 +442,8 @@ fn internal_error(message: impl Into<String>) -> super::ApiError {
 #[cfg(test)]
 mod tests {
     use super::{
-        prompt_with_history, web_run_timeout_from_env, CliPromptResponse, DEFAULT_WEB_RUN_TIMEOUT,
+        auto_executor_model, prompt_with_history, web_run_timeout_from_env, CliPromptResponse,
+        DEFAULT_WEB_RUN_TIMEOUT,
     };
     use runtime::{ConversationMessage, Session};
 
@@ -488,5 +485,11 @@ mod tests {
             std::time::Duration::from_secs(45)
         );
         assert_eq!(web_run_timeout_from_env(Some("0")), DEFAULT_WEB_RUN_TIMEOUT);
+    }
+
+    #[test]
+    fn auto_uses_only_nvidia_models() {
+        assert_eq!(auto_executor_model("implement this feature"), "nvidia-agent");
+        assert_eq!(auto_executor_model("design an architecture"), "nvidia-plan");
     }
 }
