@@ -1,28 +1,33 @@
-name: phase-10d-fix5
+name: Phase 10D fix 5
+
 on:
   push:
     branches: [phase-10d-task-inspection]
+
 permissions:
   contents: write
+
 jobs:
   fix:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: phase-10d-task-inspection
           fetch-depth: 0
-      - name: Patch phase 10D
+      - name: Apply fixes
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('rust/crates/commands/src/lib.rs')
-          s=p.read_text()
-          assert 'assert_eq!(slash_command_specs().len(), 30);' in s
-          s=s.replace('assert_eq!(slash_command_specs().len(), 30);','assert_eq!(slash_command_specs().len(), 31);',1)
-          start=s.index('fn render_task_row(')
-          end=s.index('\nfn render_task_snapshot(',start)
-          new='''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
+          p = Path('rust/crates/commands/src/lib.rs')
+          s = p.read_text()
+          old = 'assert_eq!(slash_command_specs().len(), 30);'
+          assert old in s
+          s = s.replace(old, 'assert_eq!(slash_command_specs().len(), 31);', 1)
+          start = s.index('fn render_task_row(')
+          end = s.index('\nfn render_task_snapshot(', start)
+          new = '''fn render_task_row(snapshot: &runtime::SubagentSnapshot) -> String {
     let parent = snapshot.parent_id.as_deref().unwrap_or("-");
     let result = snapshot
         .result
@@ -39,12 +44,19 @@ jobs:
         snapshot.description,
     )
 }'''
-          s=s[:start]+new+s[end:]
+          s = s[:start] + new + s[end:]
           p.write_text(s)
           PY
-          cargo test -p claw-commands tasks_command_parses_and_renders_registry_state renders_help_from_shared_specs
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add rust/crates/commands/src/lib.rs
-          git commit -m 'fix: complete phase 10d task inspection' || true
-          git push origin HEAD:phase-10d-task-inspection
+          git diff --cached --check
+          git commit -m 'fix: complete phase 10d task inspection'
+          git push origin phase-10d-task-inspection
+      - name: Remove temporary workflow
+        run: |
+          git rm .github/workflows/phase-10d-fix5.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'chore: remove temporary Phase 10D fix workflow'
+          git push origin phase-10d-task-inspection
