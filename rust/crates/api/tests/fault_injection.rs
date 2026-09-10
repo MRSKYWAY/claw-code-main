@@ -154,7 +154,7 @@ async fn provider_stream_survives_valid_prefix_then_discards_truncated_frame() {
         "event: content_block_start\n",
         "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"hello\"}}\n",
     );
-    let server = spawn_raw_response(response).await;
+    let server = spawn_raw_response(response.to_string()).await;
     let client = ApiClient::new("test-key")
         .with_base_url(server.base_url())
         .with_retry_policy(0, Duration::ZERO, Duration::ZERO);
