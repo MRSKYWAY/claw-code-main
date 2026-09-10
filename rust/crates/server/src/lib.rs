@@ -547,8 +547,8 @@ fn load_store(path: &FsPath) -> Result<PersistedStore, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        app, AppState, CreateSessionResponse, ListModelsResponse, ListSessionsResponse,
-        RuntimeStatusResponse, Session, SessionDetailsResponse,
+        app, AppState, CreateSessionResponse, ListAgentsResponse, ListModelsResponse,
+        ListSessionsResponse, RuntimeStatusResponse, Session, SessionDetailsResponse,
     };
     use reqwest::Client;
     use std::fs;
@@ -732,6 +732,16 @@ mod tests {
         let server = TestServer::spawn().await;
         let client = Client::new();
         let _created = create_session(&client, &server).await;
+        let agents = client
+            .get(server.url("/agents"))
+            .send()
+            .await
+            .expect("agents request should succeed")
+            .error_for_status()
+            .expect("agents request should return success")
+            .json::<ListAgentsResponse>()
+            .await
+            .expect("agents response should parse");
 
         let status = client
             .get(server.url("/status"))
@@ -748,7 +758,7 @@ mod tests {
         assert_eq!(status.session_count, 1);
         assert_eq!(status.message_count, 0);
         assert!(status.model_count > 0);
-        assert_eq!(status.agent_count, 0);
+        assert_eq!(status.agent_count, agents.agents.len());
     }
 
     #[tokio::test]
