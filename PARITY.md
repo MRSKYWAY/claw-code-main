@@ -30,10 +30,10 @@ The project is still **not feature-parity** with the TypeScript CLI. The highest
 ### Remaining major gaps
 
 - External Agent execution is not yet interruptible directly from registry cancellation; registry cancellation is cooperative at the orchestration/state boundary
-- Task listing/querying and persistent background-task/session history integration
+- Persistent background-task/session history integration
 - Broader TypeScript tool families and workflow/system tools
 - TypeScript-style remote/structured assistant transport layers
-- First-class interactive `/plan`, `/review`, `/tasks`, and related command-family parity
+- First-class interactive `/plan`, `/review`, and related command-family parity
 - Bundled/MCP-backed skill registry and richer live discovery/reload semantics
 - Broader service ecosystem such as analytics, settings sync, policy limits, team memory, notifier, and voice layers
 - Full transport- and event-level parity for machine-readable/remote assistant execution
@@ -104,11 +104,11 @@ The Rust CLI has a shared slash-command registry, local REPL/one-shot prompt flo
 
 ### Remaining gaps
 
-- First-class interactive `/mcp`, `/plan`, `/review`, `/tasks`, and other TypeScript command families
+- First-class interactive `/plan`, `/review`, and other TypeScript command families
 - TypeScript-style handler decomposition across the full CLI
 - Rich remote/structured transport layers equivalent to `structuredIO`, `remoteIO`, and transport-specific handlers
 - Full machine-readable event/stream contract parity across all execution modes
-- Subagent/task inspection commands backed by a shared runtime registry
+- Persistent subagent task/session history beyond the live registry
 
 **Status:** strong local CLI core; subagent-aware task UX remains a later integration slice.
 
@@ -159,10 +159,11 @@ Core provider APIs, OAuth, usage accounting, MCP bootstrap/client support, remot
 - **Phase 10A:** added a runtime-owned subagent orchestration registry with parent linkage, explicit lifecycle transitions, cooperative cancellation, duplicate-ID protection, and terminal result/error capture.
 - **Phase 10B:** synchronized live Agent manifest lifecycle state into the runtime subagent registry without rewriting the existing dispatcher.
 - **Phase 10C:** propagated nested Agent parent relationships through the existing worker-thread boundary, captured terminal child results from persisted output, and recursively cascaded registry cancellation through descendants without rewriting the large Agent dispatcher.
+- **Phase 10D:** exposed registry-backed `/tasks` inspection with deterministic listing, parent/state/result/error rendering, and session-safe ID lookup.
 
 ## recommended next implementation targets
 
-1. **Phase 10D — task inspection:** expose registry-backed `/tasks`/agent-status plumbing and session-safe task lookup before adding richer planning/review UX.
-2. Wire registry cancellation back into external Agent execution so provider work can terminate cooperatively.
+1. **Phase 10E — direct Agent cancellation:** wire registry cancellation back into external Agent execution so provider work can terminate cooperatively.
+2. Expand persistent background-task/session history and session-safe lookup so provider work can terminate cooperatively.
 3. Expand structured/remote assistant transport semantics only after the subagent/task model is represented consistently across local execution modes.
 4. Return to richer MCP lifecycle and the broader TypeScript service/tool ecosystem after the subagent architecture is wired through the live dispatcher.

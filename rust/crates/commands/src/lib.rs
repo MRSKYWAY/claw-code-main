@@ -2131,6 +2131,61 @@ mod tests {
 
     #[allow(clippy::too_many_lines)]
     #[test]
+    fn tasks_command_parses_and_renders_registry_state() {
+        assert_eq!(
+            SlashCommand::parse("/tasks"),
+            Some(SlashCommand::Tasks { agent_id: None })
+        );
+        assert_eq!(
+            SlashCommand::parse("/tasks child-1"),
+            Some(SlashCommand::Tasks {
+                agent_id: Some("child-1".to_string())
+            })
+        );
+
+        let registry = runtime::SubagentRegistry::new();
+        registry
+            .sync_external(
+                "z-child",
+                Some("parent".to_string()),
+                "last child",
+                runtime::SubagentState::Succeeded,
+                Some("done".to_string()),
+                None,
+            )
+            .expect("child sync");
+        registry
+            .sync_external(
+                "a-root",
+                None,
+                "root task",
+                runtime::SubagentState::Running,
+                None,
+                None,
+            )
+            .expect("root sync");
+
+        let snapshots = registry.snapshots().expect("snapshots");
+        let report = super::render_tasks_report(&snapshots, None);
+        assert!(report.contains("Tasks"));
+        assert!(report.contains("Total            2"));
+        assert!(report.contains("a-root"));
+        assert!(report.contains("running"));
+        assert!(report.contains("z-child"));
+        assert!(report.contains("parent=parent"));
+        assert!(report.contains("Result           done"));
+        assert!(report.find("a-root").unwrap() < report.find("z-child").unwrap());
+
+        let detail = super::render_tasks_report(&snapshots, Some("z-child"));
+        assert!(detail.contains("State            succeeded"));
+        assert!(detail.contains("Parent           parent"));
+        assert!(detail.contains("Result           done"));
+
+        let missing = super::render_tasks_report(&snapshots, Some("missing"));
+        assert!(missing.contains("Result           not found"));
+    }
+
+    #[test]
     fn parses_supported_slash_commands() {
         assert_eq!(SlashCommand::parse("/help"), Some(SlashCommand::Help));
         assert_eq!(SlashCommand::parse(" /status "), Some(SlashCommand::Status));
