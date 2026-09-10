@@ -93,3 +93,5 @@ jobs:
           git add rust/crates/claw-cli/src/main.rs rust/crates/commands/src/lib.rs .github/workflows/ci.yml .github/workflows
           git commit -m "fix: finish Phase 10D test surface"
           git push origin HEAD:phase-10d-clean
+
+# Triggered by a connector-authored commit so the repair job runs on the branch.
