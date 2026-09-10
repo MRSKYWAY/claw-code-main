@@ -88,7 +88,10 @@ pub use remote::{
 };
 pub use retry::{RetryDisposition, RetryPolicy};
 pub use session::{ContentBlock, ConversationMessage, MessageRole, Session, SessionError};
-pub use subagent::{SubagentError, SubagentHandle, SubagentRegistry, SubagentSnapshot, SubagentState};
+pub use subagent::{
+    global_subagent_registry, SubagentError, SubagentHandle, SubagentRegistry, SubagentSnapshot,
+    SubagentState,
+};
 pub use usage::{
     format_usd, pricing_for_model, ModelPricing, TokenUsage, UsageCostEstimate, UsageTracker,
 };
