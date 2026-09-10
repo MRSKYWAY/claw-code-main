@@ -92,7 +92,7 @@ jobs:
           PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          rm -f .github/workflows/phase-10d-fix5.yml .github/workflows/phase-10d-test-fix3.yml .github/workflows/phase-10d-test-fix4.yml .github/workflows/phase-10d-test-fix2.yml .github/workflows/phase-10d-test-fix.yml
+          rm -f .github/workflows/phase-10d-fix5.yml .github/workflows/phase-10d-fix6.yml .github/workflows/phase-10d-test-fix3.yml .github/workflows/phase-10d-test-fix4.yml .github/workflows/phase-10d-test-fix2.yml .github/workflows/phase-10d-test-fix.yml
           git add rust/crates/commands/src/lib.rs .github/workflows
           git diff --cached --check
           git commit -m 'fix: complete phase 10d task inspection'
