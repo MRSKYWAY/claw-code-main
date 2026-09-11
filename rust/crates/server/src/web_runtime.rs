@@ -1,3 +1,6 @@
+#[path = "web_recovery.rs"]
+mod web_recovery;
+
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
@@ -57,7 +60,7 @@ pub async fn run_prompt(
         .map_err(|error| internal_error(format!("could not save web sessions: {error}")))?;
     let _ = broadcaster.send(super::SessionEvent::Message {
         session_id: id.clone(),
-        message: user_message,
+        message: user_message.clone(),
     });
 
     let prompt = prompt.to_string();
@@ -66,14 +69,31 @@ pub async fn run_prompt(
     let command_model = model.clone();
     let command_session_id = id.clone();
     let command_broadcaster = broadcaster.clone();
+    let recovery_conversation = {
+        let mut conversation = conversation.clone();
+        conversation.messages.push(user_message);
+        conversation
+    };
+    let existing_sessions = snapshot_managed_sessions();
     let result = tokio::task::spawn_blocking(move || {
-        execute_claw(
+        match execute_claw(
             &command_model,
             &command_prompt,
             &conversation,
             &command_session_id,
             &command_broadcaster,
-        )
+        ) {
+            Ok(result) => Ok(result),
+            Err(error) => Ok(recover_failed_run(
+                &command_model,
+                &command_prompt,
+                &recovery_conversation,
+                &command_session_id,
+                &command_broadcaster,
+                &existing_sessions,
+                error.0.error,
+            )),
+        }
     })
     .await
     .map_err(|error| internal_error(format!("prompt task failed: {error}")))??;
@@ -129,6 +149,73 @@ type SessionBroadcaster = broadcast::Sender<super::SessionEvent>;
 enum ChildOutput {
     Stdout(String),
     Stderr(String),
+}
+
+fn recover_failed_run(
+    model: &str,
+    task_prompt: &str,
+    conversation: &RuntimeSession,
+    session_id: &str,
+    broadcaster: &SessionBroadcaster,
+    existing_sessions: &HashSet<PathBuf>,
+    failure: String,
+) -> ClawRunResult {
+    let (execution_context, mut activities) = web_recovery::execution_context(existing_sessions);
+    activities.push(RunActivity {
+        kind: "recovery".to_string(),
+        label: "Failure recovery · started".to_string(),
+        detail: truncate(&failure, 500),
+        is_error: true,
+    });
+
+    let recovery_prompt = web_recovery::failure_recovery_prompt(
+        task_prompt,
+        &failure,
+        conversation,
+        &execution_context,
+    );
+    let recovery_model = web_recovery::recovery_model(model);
+    let recovery = execute_claw_process(
+        recovery_model,
+        &recovery_prompt,
+        None,
+        0,
+        Duration::from_secs(web_recovery::FAILURE_RECOVERY_TIMEOUT_SECS),
+        "Claw recovery",
+        session_id,
+        broadcaster,
+    );
+
+    match recovery {
+        Ok(mut result) => {
+            activities.append(&mut result.activities);
+            result.activities = activities;
+            result
+        }
+        Err(error) => {
+            let recovery_failure = error
+                .1
+                .0
+                .error
+                .trim()
+                .to_string();
+            let detail = if recovery_failure.is_empty() {
+                failure.clone()
+            } else {
+                format!("{failure}; recovery pass failed: {recovery_failure}")
+            };
+            activities.push(RunActivity {
+                kind: "recovery".to_string(),
+                label: "Failure recovery · fallback".to_string(),
+                detail: truncate(&detail, 500),
+                is_error: true,
+            });
+            ClawRunResult {
+                message: web_recovery::deterministic_fallback(&detail),
+                activities,
+            }
+        }
+    }
 }
 
 fn execute_claw(
@@ -741,7 +828,8 @@ fn internal_error(message: impl Into<String>) -> super::ApiError {
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_executor_model, prompt_with_history, web_run_timeout_from_env, DEFAULT_WEB_RUN_TIMEOUT,
+        auto_executor_model, prompt_with_history, recover_failed_run, web_run_timeout_from_env,
+        DEFAULT_WEB_RUN_TIMEOUT,
     };
     use runtime::{ConversationMessage, Session};
 
@@ -770,5 +858,10 @@ mod tests {
     fn auto_uses_only_nvidia_models() {
         assert_eq!(auto_executor_model("implement this feature"), "nvidia-agent");
         assert_eq!(auto_executor_model("design an architecture"), "nvidia-plan");
+    }
+
+    #[test]
+    fn recovery_path_is_available() {
+        let _ = recover_failed_run;
     }
 }
