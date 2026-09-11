@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use runtime::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, MessageRole, PermissionMode,
     PermissionPolicy, RuntimeError, Session, StaticToolExecutor,
@@ -133,12 +135,13 @@ impl ApiClient for AlwaysRequestsToolApi {
 
 #[test]
 fn repeated_tool_requests_during_finalization_are_not_executed() {
-    let mut executions = 0;
+    let executions = Arc::new(Mutex::new(0usize));
+    let executions_for_tool = Arc::clone(&executions);
     let mut runtime = ConversationRuntime::new(
         Session::new(),
         AlwaysRequestsToolApi { calls: 0 },
         StaticToolExecutor::new().register("echo", move |input| {
-            executions += 1;
+            *executions_for_tool.lock().expect("counter lock") += 1;
             Ok(input.to_string())
         }),
         PermissionPolicy::new(PermissionMode::DangerFullAccess),
@@ -150,6 +153,16 @@ fn repeated_tool_requests_during_finalization_are_not_executed() {
         .run_turn("keep going", None)
         .expect("bounded finalization should return without executing finalization tools");
 
-    assert_eq!(summary.iterations, 4);
-    assert_eq!(executions, 1);
+    assert_eq!(summary.iterations, 5);
+    assert_eq!(*executions.lock().expect("counter lock"), 1);
+    assert!(summary
+        .assistant_messages
+        .last()
+        .expect("fallback assistant message")
+        .blocks
+        .iter()
+        .any(|block| matches!(
+            block,
+            runtime::ContentBlock::Text { text } if text.contains("configured tool-iteration budget")
+        )));
 }
