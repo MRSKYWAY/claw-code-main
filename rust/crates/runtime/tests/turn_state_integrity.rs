@@ -114,6 +114,58 @@ fn iteration_limit_enters_finalization_instead_of_returning_an_error() {
         )));
 }
 
+struct EmptyStreamThenFinalizesApi {
+    calls: usize,
+}
+
+impl ApiClient for EmptyStreamThenFinalizesApi {
+    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+        self.calls += 1;
+        if request
+            .system_prompt
+            .iter()
+            .any(|section| section.contains("FINALIZATION PASS"))
+        {
+            return Ok(vec![
+                AssistantEvent::TextDelta(
+                    "Completed: the code changes already made.\nRemaining: one validation pass.\nValidation: prior tool results preserved.\nBlockers: none known.".to_string(),
+                ),
+                AssistantEvent::MessageStop,
+            ]);
+        }
+
+        Ok(vec![AssistantEvent::MessageStop])
+    }
+}
+
+#[test]
+fn empty_assistant_stream_enters_finalization_instead_of_failing() {
+    let mut runtime = ConversationRuntime::new(
+        Session::new(),
+        EmptyStreamThenFinalizesApi { calls: 0 },
+        StaticToolExecutor::new(),
+        PermissionPolicy::new(PermissionMode::DangerFullAccess),
+        vec!["system".to_string()],
+    )
+    .with_max_iterations(64);
+
+    let summary = runtime
+        .run_turn("finish the task", None)
+        .expect("empty assistant stream should trigger finalization");
+
+    assert!(summary.iterations >= 1);
+    assert!(summary
+        .assistant_messages
+        .last()
+        .expect("final assistant message")
+        .blocks
+        .iter()
+        .any(|block| matches!(
+            block,
+            runtime::ContentBlock::Text { text } if text.contains("Completed: the code changes already made")
+        )));
+}
+
 struct AlwaysRequestsToolApi {
     calls: usize,
 }
