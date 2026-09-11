@@ -236,7 +236,7 @@ fn auto_executor_model(prompt: &str) -> &'static str {
     {
         "nvidia-plan"
     } else {
-        "nvidia-agent"
+        "nvidia-fast"
     }
 }
 
@@ -767,8 +767,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_uses_only_nvidia_models() {
-        assert_eq!(auto_executor_model("implement this feature"), "nvidia-agent");
+    fn auto_uses_fast_for_default_executor_and_plan_for_architecture() {
+        assert_eq!(auto_executor_model("implement this feature"), "nvidia-fast");
         assert_eq!(auto_executor_model("design an architecture"), "nvidia-plan");
     }
 }
