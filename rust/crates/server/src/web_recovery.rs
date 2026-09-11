@@ -43,43 +43,57 @@ pub(crate) fn execution_context(existing: &HashSet<PathBuf>) -> (String, Vec<Run
         };
         context.push_str(&format!("\n<execution-session path=\"{}\">\n", path.display()));
         for message in &session.messages {
-            for block in &message.blocks {
-                match block {
-                    ContentBlock::Text { text } if message.role == MessageRole::Assistant => {
-                        if !text.trim().is_empty() {
-                            context.push_str("assistant: ");
-                            context.push_str(&truncate(text, 4000));
-                            context.push('\n');
+            match message.role {
+                MessageRole::Assistant => {
+                    let text = message
+                        .blocks
+                        .iter()
+                        .filter_map(|block| match block {
+                            ContentBlock::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("");
+                    if !text.trim().is_empty() {
+                        context.push_str("assistant: ");
+                        context.push_str(&truncate(&text, 4000));
+                        context.push('\n');
+                    }
+                }
+                MessageRole::Tool => {
+                    for block in &message.blocks {
+                        match block {
+                            ContentBlock::ToolUse { name, input, .. } => {
+                                context.push_str(&format!("tool call {name}: {}\n", truncate(input, 2000)));
+                                activities.push(RunActivity {
+                                    kind: "tool_call".to_string(),
+                                    label: name.clone(),
+                                    detail: truncate(input, 500),
+                                    is_error: false,
+                                });
+                            }
+                            ContentBlock::ToolResult {
+                                tool_name,
+                                output,
+                                is_error,
+                                ..
+                            } => {
+                                context.push_str(&format!(
+                                    "tool result {tool_name}: {}\n",
+                                    truncate(output, 3000)
+                                ));
+                                activities.push(RunActivity {
+                                    kind: "tool_result".to_string(),
+                                    label: tool_name.clone(),
+                                    detail: truncate(output, 500),
+                                    is_error: *is_error,
+                                });
+                            }
+                            _ => {}
                         }
                     }
-                    ContentBlock::ToolUse { name, input, .. } => {
-                        context.push_str(&format!("tool call {name}: {}\n", truncate(input, 2000)));
-                        activities.push(RunActivity {
-                            kind: "tool_call".to_string(),
-                            label: name.clone(),
-                            detail: truncate(input, 500),
-                            is_error: false,
-                        });
-                    }
-                    ContentBlock::ToolResult {
-                        tool_name,
-                        output,
-                        is_error,
-                        ..
-                    } => {
-                        context.push_str(&format!(
-                            "tool result {tool_name}: {}\n",
-                            truncate(output, 3000)
-                        ));
-                        activities.push(RunActivity {
-                            kind: "tool_result".to_string(),
-                            label: tool_name.clone(),
-                            detail: truncate(output, 500),
-                            is_error: *is_error,
-                        });
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
         }
         context.push_str("</execution-session>\n");
