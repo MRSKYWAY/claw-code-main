@@ -84,6 +84,7 @@ const MAX_FINALIZATION_ATTEMPTS: usize = 3;
 const FINALIZATION_SYSTEM_INSTRUCTION: &str = "FINALIZATION PASS: The configured tool-iteration budget has been reached. Do not use any more tools or modify the workspace. Based only on the work already completed in this conversation, provide the final response now. Use these headings exactly: Completed, Remaining, Validation, Blockers. State clearly what was changed, what remains unfinished, what validation succeeded or could not be completed, and any known blocker. Do not claim completion for work you could not verify.";
 const FINALIZATION_TOOL_BLOCK_MESSAGE: &str = "The tool-iteration budget has been reached, so tools are disabled for this finalization pass. Stop calling tools and provide the requested final response with Completed, Remaining, Validation, and Blockers.";
 const FINALIZATION_FALLBACK_MESSAGE: &str = "Completed: the configured tool-iteration budget was consumed and completed tool results were preserved.\nRemaining: the model did not provide a final synthesis, so the exact remaining work could not be confirmed.\nValidation: all tool results produced before finalization remain in the session.\nBlockers: the model continued requesting tools during the bounded finalization pass.";
+const EMPTY_STREAM_MESSAGE: &str = "assistant stream produced no content";
 
 pub struct ConversationRuntime<C, T> {
     session: Session,
@@ -207,7 +208,23 @@ where
                 messages: self.session.messages.clone(),
             };
             let events = self.api_client.stream_with_cancellation(request, cancellation)?;
-            let (assistant_message, usage) = build_assistant_message(events)?;
+            let (assistant_message, usage) = match build_assistant_message(events) {
+                Ok(result) => result,
+                Err(error) if error.to_string() == EMPTY_STREAM_MESSAGE => {
+                    if finalization_mode {
+                        let fallback_message = ConversationMessage::assistant(vec![ContentBlock::Text {
+                            text: "Completed: the model completed tool execution but returned an empty final response.\nRemaining: the exact remaining work could not be determined from the final model response.\nValidation: completed tool results were preserved in the session.\nBlockers: the provider returned an empty assistant stream during finalization.".to_string(),
+                        }]);
+                        self.session.messages.push(fallback_message.clone());
+                        assistant_messages.push(fallback_message);
+                        break;
+                    }
+                    finalization_mode = true;
+                    finalization_attempts = 0;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             validate_assistant_tool_uses(&assistant_message)?;
             if let Some(usage) = usage {
                 self.usage_tracker.record(usage);
@@ -375,7 +392,7 @@ fn build_assistant_message(
         ));
     }
     if blocks.is_empty() {
-        return Err(RuntimeError::new("assistant stream produced no content"));
+        return Err(RuntimeError::new(EMPTY_STREAM_MESSAGE));
     }
 
     Ok((
