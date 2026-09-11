@@ -184,6 +184,10 @@ enum SessionEvent {
         session_id: SessionId,
         message: ConversationMessage,
     },
+    Activity {
+        session_id: SessionId,
+        activity: RunActivity,
+    },
 }
 
 impl SessionEvent {
@@ -191,6 +195,7 @@ impl SessionEvent {
         match self {
             Self::Snapshot { .. } => "snapshot",
             Self::Message { .. } => "message",
+            Self::Activity { .. } => "activity",
         }
     }
 

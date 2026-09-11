@@ -41,40 +41,14 @@
       color:var(--foreground);
       font:14px/1.5 "JetBrains Mono","Fira Code","Cascadia Code",Consolas,monospace;
     }
-    body::after {
-      content:"";
-      position:fixed;
-      inset:0;
-      pointer-events:none;
-      z-index:1000;
-      opacity:.18;
-      background:repeating-linear-gradient(0deg,transparent 0,transparent 2px,#000 2px,#000 4px);
-      mix-blend-mode:multiply;
-    }
-    body::before {
-      content:"";
-      position:fixed;
-      inset:0;
-      pointer-events:none;
-      z-index:999;
-      opacity:.25;
-      background:linear-gradient(90deg,#ff00ff08,transparent 18%,transparent 82%,#00d4ff08);
-    }
+    body::after { content:""; position:fixed; inset:0; pointer-events:none; z-index:1000; opacity:.18; background:repeating-linear-gradient(0deg,transparent 0,transparent 2px,#000 2px,#000 4px); mix-blend-mode:multiply; }
+    body::before { content:""; position:fixed; inset:0; pointer-events:none; z-index:999; opacity:.25; background:linear-gradient(90deg,#ff00ff08,transparent 18%,transparent 82%,#00d4ff08); }
     button,select,textarea { font:inherit; }
     button { min-height:44px; }
     button:focus-visible,select:focus-visible,textarea:focus-visible { outline:2px solid var(--ring); outline-offset:2px; box-shadow:var(--neon); }
     .app { min-height:100vh; height:100vh; display:grid; grid-template-columns:250px minmax(0,1fr) 320px; background:transparent; }
     .rail,.side,main { min-height:0; }
-    .rail {
-      background:linear-gradient(180deg,#0f0f16f5,#0a0a0fe8);
-      border-right:1px solid var(--border);
-      padding:18px 14px;
-      display:flex;
-      flex-direction:column;
-      gap:16px;
-      overflow:hidden;
-      box-shadow:inset -10px 0 24px #00ff8804;
-    }
+    .rail { background:linear-gradient(180deg,#0f0f16f5,#0a0a0fe8); border-right:1px solid var(--border); padding:18px 14px; display:flex; flex-direction:column; gap:16px; overflow:hidden; box-shadow:inset -10px 0 24px #00ff8804; }
     .brand { color:var(--foreground); font:700 18px "Share Tech Mono",monospace; letter-spacing:.18em; text-transform:uppercase; padding:4px 8px 12px; text-shadow:0 0 8px #00ff8838,-2px 0 #ff00ff20,2px 0 #00d4ff20; }
     .mark { display:inline-grid; place-items:center; width:28px; height:28px; margin-right:8px; border:1px solid var(--accent); border-radius:0; background:var(--card); color:var(--accent); transform:skewX(-12deg); box-shadow:var(--neon-sm); }
     .new,.send { cursor:pointer; text-transform:uppercase; letter-spacing:.16em; transition:all 120ms steps(3); }
@@ -107,12 +81,15 @@
     .message.error { background:#1a0c12; border-color:var(--destructive); color:#ffb0c3; box-shadow:0 0 8px #ff336644; }
     .pending { color:#8c95a4; font-style:normal; }
     .trace { max-width:94%; border:1px solid var(--border); border-radius:0; overflow:hidden; background:#0d0d14; box-shadow:inset 0 0 20px #00d4ff05; clip-path:polygon(0 8px,8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%); }
+    .trace.live { border-color:#00ff8868; box-shadow:var(--neon-sm),inset 0 0 20px #00ff8808; }
+    .trace.live summary { color:var(--accent); text-shadow:var(--neon-sm); }
     .trace summary { cursor:pointer; padding:10px 13px; color:var(--accent-tertiary); font-size:10px; text-transform:uppercase; letter-spacing:.13em; }
     .trace summary:hover { text-shadow:var(--neon-cyan); }
     .trace summary::marker { color:var(--accent); }
     .trace-list { padding:0 12px 12px; display:grid; gap:7px; }
     .tool { border-left:2px solid var(--accent); background:#101018; padding:8px 10px; border-radius:0; }
     .tool.error { border-color:var(--destructive); }
+    .tool.pending { border-color:var(--accent-tertiary); }
     .tool b { display:block; color:var(--accent); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
     .tool code { display:block; margin-top:4px; white-space:pre-wrap; word-break:break-word; color:#737d8d; font-size:10px; line-height:1.45; }
     .empty-work { padding:0 13px 12px; color:#59616f; font-size:10px; }
@@ -175,23 +152,334 @@
   </div>
   <script>
     const $ = id => document.getElementById(id);
-    const state = { id: null, runs: [] };
+    const state = { id: null, runs: [], events: null, liveWork: null };
+
     function text(message) { return (message.blocks || []).map(block => block.text || '').filter(Boolean).join('\n').trim(); }
-    async function loadModels() { const data = await fetch('/models').then(response => response.json()); const select = $('model'); const previous = select.value; select.innerHTML = ''; data.models.filter(model => !model.alias.startsWith('claude-')).forEach(model => { const option = document.createElement('option'); option.value = model.alias; option.textContent = `${model.label} · ${model.model}`; select.append(option); }); select.value = [...select.options].some(option => option.value === previous) ? previous : 'nvidia-agent'; $('active').textContent = select.value; }
-    async function refreshRuntimeStatus() { const [statusResponse, agentsResponse] = await Promise.all([fetch('/status'), fetch('/agents')]); if (!statusResponse.ok) throw Error('Runtime status unavailable'); const data = await statusResponse.json(); const agents = agentsResponse.ok ? await agentsResponse.json() : { agents: [] }; const activeAgents = (agents.agents || []).filter(agent => agent.status === 'queued' || agent.status === 'running').length; const sessionLabel = data.session_count === 1 ? 'session' : 'sessions'; const activeAgentLabel = activeAgents === 1 ? 'active agent' : 'active agents'; $('runtime').textContent = `${data.status} · ${data.session_count} ${sessionLabel} · ${data.message_count} messages · ${data.model_count} models · ${activeAgents} ${activeAgentLabel}`; }
+
+    async function loadModels() {
+      const data = await fetch('/models').then(response => response.json());
+      const select = $('model');
+      const previous = select.value;
+      select.innerHTML = '';
+      data.models.filter(model => !model.alias.startsWith('claude-')).forEach(model => {
+        const option = document.createElement('option');
+        option.value = model.alias;
+        option.textContent = `${model.label} · ${model.model}`;
+        select.append(option);
+      });
+      select.value = [...select.options].some(option => option.value === previous) ? previous : 'nvidia-agent';
+      $('active').textContent = select.value;
+    }
+
+    async function refreshRuntimeStatus() {
+      const [statusResponse, agentsResponse] = await Promise.all([fetch('/status'), fetch('/agents')]);
+      if (!statusResponse.ok) throw Error('Runtime status unavailable');
+      const data = await statusResponse.json();
+      const agents = agentsResponse.ok ? await agentsResponse.json() : { agents: [] };
+      const activeAgents = (agents.agents || []).filter(agent => agent.status === 'queued' || agent.status === 'running').length;
+      const sessionLabel = data.session_count === 1 ? 'session' : 'sessions';
+      const activeAgentLabel = activeAgents === 1 ? 'active agent' : 'active agents';
+      $('runtime').textContent = `${data.status} · ${data.session_count} ${sessionLabel} · ${data.message_count} messages · ${data.model_count} models · ${activeAgents} ${activeAgentLabel}`;
+    }
+
     function role(message) { return String(message.role || '').toLowerCase(); }
-    function addMessage(message, kind) { const node = document.createElement('article'); node.className = `message ${kind}`; node.textContent = text(message) || '(no text output)'; $('messages').append(node); return node; }
-    function addWork(run) { const details = document.createElement('details'); details.className = 'trace'; const summary = document.createElement('summary'); summary.textContent = `Work log · ${run.activities.length} tool event${run.activities.length === 1 ? '' : 's'} · ${run.model}`; details.append(summary); const list = document.createElement('div'); list.className = 'trace-list'; if (!run.activities.length) { const empty = document.createElement('div'); empty.className = 'empty-work'; empty.textContent = 'No tools were needed for this response.'; list.append(empty); } run.activities.forEach(activity => { const item = document.createElement('div'); item.className = `tool ${activity.is_error ? 'error' : ''}`; const label = document.createElement('b'); label.textContent = `${activity.kind === 'tool_result' ? 'result' : 'tool'} · ${activity.label}`; const detail = document.createElement('code'); detail.textContent = activity.detail || '(no output)'; item.append(label, detail); list.append(item); }); details.append(list); $('messages').append(details); }
-    function setActivity(run) { const root = $('activity'); root.innerHTML = ''; const activities = run ? run.activities : []; if (!activities.length) { root.innerHTML = '<div class="activity">Ready for a prompt<span>no tool activity yet</span></div>'; return; } activities.slice(-8).reverse().forEach(activity => { const node = document.createElement('div'); node.className = `activity ${activity.is_error ? 'error' : ''}`; node.textContent = activity.label; const detail = document.createElement('span'); detail.textContent = activity.detail || activity.kind; node.append(detail); root.append(node); }); }
-    async function refreshAgents() { const response = await fetch('/agents'); if (!response.ok) return; const data = await response.json(); const root = $('agents'); root.innerHTML = ''; const agents = data.agents || []; const active = agents.filter(agent => agent.status === 'queued' || agent.status === 'running'); const history = agents.filter(agent => agent.status !== 'queued' && agent.status !== 'running'); const activeLabel = document.createElement('div'); activeLabel.className = 'agent-group-label'; activeLabel.textContent = `Active · ${active.length}`; root.append(activeLabel); if (!active.length) { const empty = document.createElement('div'); empty.className = 'agent-group-empty'; empty.textContent = 'No active agents'; root.append(empty); } else { active.slice(0, 8).forEach(agent => { const node = document.createElement('div'); node.className = `agent ${agent.status}`; const title = document.createElement('strong'); title.textContent = agent.name || agent.subagentType || agent.agentId; const detail = document.createElement('span'); detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`; node.append(title, detail); root.append(node); }); } if (history.length) { const details = document.createElement('details'); details.className = 'agent-history'; const summary = document.createElement('summary'); summary.textContent = `History · ${history.length}`; details.append(summary); const list = document.createElement('div'); list.className = 'agent-history-list'; history.slice(0, 12).forEach(agent => { const node = document.createElement('div'); node.className = `agent ${agent.status}`; const title = document.createElement('strong'); title.textContent = agent.name || agent.subagentType || agent.agentId; const detail = document.createElement('span'); detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`; node.append(title, detail); list.append(node); }); details.append(list); root.append(details); } }
+
+    function addMessage(message, kind) {
+      const node = document.createElement('article');
+      node.className = `message ${kind}`;
+      node.textContent = text(message) || '(no text output)';
+      $('messages').append(node);
+      return node;
+    }
+
+    function makeWorkItem(activity) {
+      const item = document.createElement('div');
+      item.className = `tool ${activity.is_error ? 'error' : ''}`;
+      const label = document.createElement('b');
+      label.textContent = `${activity.kind === 'tool_result' ? 'result' : activity.kind || 'event'} · ${activity.label}`;
+      const detail = document.createElement('code');
+      detail.textContent = activity.detail || '(no output)';
+      item.append(label, detail);
+      return item;
+    }
+
+    function addWork(run) {
+      const details = document.createElement('details');
+      details.className = 'trace';
+      const summary = document.createElement('summary');
+      summary.textContent = `Work log · ${run.activities.length} tool event${run.activities.length === 1 ? '' : 's'} · ${run.model}`;
+      details.append(summary);
+      const list = document.createElement('div');
+      list.className = 'trace-list';
+      if (!run.activities.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-work';
+        empty.textContent = 'No tools were needed for this response.';
+        list.append(empty);
+      }
+      run.activities.forEach(activity => list.append(makeWorkItem(activity)));
+      details.append(list);
+      $('messages').append(details);
+    }
+
+    function beginLiveWork(model) {
+      const details = document.createElement('details');
+      details.className = 'trace live';
+      details.open = true;
+      const summary = document.createElement('summary');
+      summary.textContent = `Work log · 0 tool events · ${model} · RUNNING`;
+      const list = document.createElement('div');
+      list.className = 'trace-list';
+      const empty = document.createElement('div');
+      empty.className = 'empty-work';
+      empty.textContent = 'Starting Claw…';
+      list.append(empty);
+      details.append(summary, list);
+      $('messages').append(details);
+      state.liveWork = { details, summary, list, model, activities: [] };
+      return state.liveWork;
+    }
+
+    function appendLiveActivity(activity) {
+      if (!state.liveWork) return;
+      const work = state.liveWork;
+      work.activities.push(activity);
+      const empty = work.list.querySelector('.empty-work');
+      if (empty) empty.remove();
+      work.list.append(makeWorkItem(activity));
+      work.summary.textContent = `Work log · ${work.activities.length} tool event${work.activities.length === 1 ? '' : 's'} · ${work.model} · RUNNING`;
+      setActivity({ activities: work.activities });
+      scrollChat();
+    }
+
+    function finishLiveWork(run) {
+      const work = state.liveWork;
+      if (!work) {
+        addWork(run);
+        return;
+      }
+      work.activities = run.activities || [];
+      work.list.innerHTML = '';
+      if (!work.activities.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-work';
+        empty.textContent = 'No tools were needed for this response.';
+        work.list.append(empty);
+      } else {
+        work.activities.forEach(activity => work.list.append(makeWorkItem(activity)));
+      }
+      work.summary.textContent = `Work log · ${work.activities.length} tool event${work.activities.length === 1 ? '' : 's'} · ${work.model} · COMPLETE`;
+      work.details.classList.remove('live');
+      work.details.open = true;
+      state.liveWork = null;
+    }
+
+    function failLiveWork(error) {
+      if (!state.liveWork) return;
+      const work = state.liveWork;
+      const failure = { kind: 'process', label: 'Run failed', detail: error.message || String(error), is_error: true };
+      appendLiveActivity(failure);
+      work.summary.textContent = `Work log · ${work.activities.length} events · ${work.model} · FAILED`;
+      work.details.classList.remove('live');
+      work.details.open = true;
+      state.liveWork = null;
+    }
+
+    function setActivity(run) {
+      const root = $('activity');
+      root.innerHTML = '';
+      const activities = run ? run.activities : [];
+      if (!activities.length) {
+        root.innerHTML = '<div class="activity">Ready for a prompt<span>no tool activity yet</span></div>';
+        return;
+      }
+      activities.slice(-8).reverse().forEach(activity => {
+        const node = document.createElement('div');
+        node.className = `activity ${activity.is_error ? 'error' : ''}`;
+        node.textContent = activity.label;
+        const detail = document.createElement('span');
+        detail.textContent = activity.detail || activity.kind;
+        node.append(detail);
+        root.append(node);
+      });
+    }
+
+    async function refreshAgents() {
+      const response = await fetch('/agents');
+      if (!response.ok) return;
+      const data = await response.json();
+      const root = $('agents');
+      root.innerHTML = '';
+      const agents = data.agents || [];
+      const active = agents.filter(agent => agent.status === 'queued' || agent.status === 'running');
+      const history = agents.filter(agent => agent.status !== 'queued' && agent.status !== 'running');
+      const activeLabel = document.createElement('div');
+      activeLabel.className = 'agent-group-label';
+      activeLabel.textContent = `Active · ${active.length}`;
+      root.append(activeLabel);
+      if (!active.length) {
+        const empty = document.createElement('div');
+        empty.className = 'agent-group-empty';
+        empty.textContent = 'No active agents';
+        root.append(empty);
+      } else {
+        active.slice(0, 8).forEach(agent => {
+          const node = document.createElement('div');
+          node.className = `agent ${agent.status}`;
+          const title = document.createElement('strong');
+          title.textContent = agent.name || agent.subagentType || agent.agentId;
+          const detail = document.createElement('span');
+          detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`;
+          node.append(title, detail);
+          root.append(node);
+        });
+      }
+      if (history.length) {
+        const details = document.createElement('details');
+        details.className = 'agent-history';
+        const summary = document.createElement('summary');
+        summary.textContent = `History · ${history.length}`;
+        details.append(summary);
+        const list = document.createElement('div');
+        list.className = 'agent-history-list';
+        history.slice(0, 12).forEach(agent => {
+          const node = document.createElement('div');
+          node.className = `agent ${agent.status}`;
+          const title = document.createElement('strong');
+          title.textContent = agent.name || agent.subagentType || agent.agentId;
+          const detail = document.createElement('span');
+          detail.textContent = `${agent.subagentType || 'agent'} · ${agent.model || 'default'} · ${agent.status}`;
+          node.append(title, detail);
+          list.append(node);
+        });
+        details.append(list);
+        root.append(details);
+      }
+    }
+
+    function connectSessionEvents(id) {
+      if (state.events) state.events.close();
+      state.events = new EventSource(`/sessions/${id}/events`);
+      state.events.addEventListener('activity', event => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.session_id === state.id && data.activity) appendLiveActivity(data.activity);
+        } catch (_) {}
+      });
+      state.events.addEventListener('message', event => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.session_id === state.id && !state.liveWork) refreshSessions().catch(() => {});
+        } catch (_) {}
+      });
+      state.events.onerror = () => {};
+    }
+
     function scrollChat() { $('chat').scrollTop = $('chat').scrollHeight; }
-    async function refreshSessions() { const data = await fetch('/sessions').then(response => response.json()); const root = $('sessions'); root.innerHTML = ''; data.sessions.slice().reverse().forEach(session => { const node = document.createElement('button'); node.className = `session ${session.id === state.id ? 'active' : ''}`; const title = document.createElement('strong'); title.textContent = session.id; const detail = document.createElement('span'); detail.textContent = `${session.message_count} messages`; node.append(title, detail); node.onclick = () => load(session.id); root.append(node); }); }
-    function renderSession(data) { state.runs = data.runs || []; $('name').textContent = data.id; $('messages').innerHTML = ''; let run = 0; data.session.messages.forEach(message => { if (role(message) === 'assistant') { addWork(state.runs[run++] || { model: 'unknown', activities: [] }); addMessage(message, 'assistant'); } else { addMessage(message, 'user'); } }); $('hero').style.display = data.session.messages.length ? 'none' : ''; $('count').textContent = data.session.messages.length; setActivity(state.runs.at(-1)); scrollChat(); }
-    async function create() { const data = await fetch('/sessions', { method: 'POST' }).then(response => response.json()); await load(data.session_id); }
-    async function load(id) { const response = await fetch(`/sessions/${id}`); if (!response.ok) throw Error('Could not load this session'); state.id = id; renderSession(await response.json()); await refreshSessions(); }
-    $('new').onclick = () => create().catch(showFailure); $('model').onchange = () => { $('active').textContent = $('model').value; };
-    function showFailure(error) { const message = error.message || String(error); setActivity({ activities: [{ label: 'Run failed', detail: message, is_error: true }] }); $('name').textContent = 'offline'; }
-    $('form').onsubmit = async event => { event.preventDefault(); const prompt = $('prompt').value.trim(); const model = $('model').value; if (!prompt) return; if (!state.id) await create(); $('hero').style.display = 'none'; addMessage({ blocks: [{ text: prompt }] }, 'user'); const pending = addMessage({ blocks: [{ text: 'Claw is working...' }] }, 'assistant'); pending.classList.add('pending'); $('prompt').value = ''; $('send').disabled = true; setActivity({ activities: [{ label: `Running ${model}`, detail: 'Waiting for Claw tool activity', is_error: false }] }); scrollChat(); try { const response = await fetch(`/sessions/${state.id}/prompt`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, model }) }); const data = await response.json(); pending.remove(); if (!response.ok) throw Error(data.error || 'Prompt failed'); addWork(data.run); addMessage(data.message, 'assistant'); state.runs.push(data.run); setActivity(data.run); $('count').textContent = Number($('count').textContent) + 2; await refreshSessions(); } catch (error) { pending.textContent = error.message; pending.classList.remove('pending'); pending.classList.add('error'); setActivity({ activities: [{ label: 'Run failed', detail: error.message, is_error: true }] }); } finally { $('send').disabled = false; $('prompt').focus(); scrollChat(); } };
+
+    async function refreshSessions() {
+      const data = await fetch('/sessions').then(response => response.json());
+      const root = $('sessions');
+      root.innerHTML = '';
+      data.sessions.slice().reverse().forEach(session => {
+        const node = document.createElement('button');
+        node.className = `session ${session.id === state.id ? 'active' : ''}`;
+        const title = document.createElement('strong');
+        title.textContent = session.id;
+        const detail = document.createElement('span');
+        detail.textContent = `${session.message_count} messages`;
+        node.append(title, detail);
+        node.onclick = () => load(session.id);
+        root.append(node);
+      });
+    }
+
+    function renderSession(data) {
+      state.runs = data.runs || [];
+      $('messages').innerHTML = '';
+      let run = 0;
+      data.session.messages.forEach(message => {
+        if (role(message) === 'assistant') {
+          const matchedRun = state.runs[run++] || { model: 'unknown', activities: [] };
+          addWork(matchedRun);
+          addMessage(message, 'assistant');
+        } else {
+          addMessage(message, 'user');
+        }
+      });
+      $('hero').style.display = data.session.messages.length ? 'none' : '';
+      $('count').textContent = data.session.messages.length;
+      setActivity(state.runs.at(-1));
+      connectSessionEvents(data.id);
+      scrollChat();
+    }
+
+    async function create() {
+      const data = await fetch('/sessions', { method: 'POST' }).then(response => response.json());
+      await load(data.session_id);
+    }
+
+    async function load(id) {
+      const response = await fetch(`/sessions/${id}`);
+      if (!response.ok) throw Error('Could not load this session');
+      state.id = id;
+      state.liveWork = null;
+      renderSession(await response.json());
+      await refreshSessions();
+    }
+
+    $('new').onclick = () => create().catch(showFailure);
+    $('model').onchange = () => { $('active').textContent = $('model').value; };
+
+    function showFailure(error) {
+      const message = error.message || String(error);
+      setActivity({ activities: [{ label: 'Run failed', detail: message, is_error: true }] });
+      $('name').textContent = 'offline';
+    }
+
+    $('form').onsubmit = async event => {
+      event.preventDefault();
+      const prompt = $('prompt').value.trim();
+      const model = $('model').value;
+      if (!prompt) return;
+      if (!state.id) await create();
+      $('hero').style.display = 'none';
+      addMessage({ blocks: [{ text: prompt }] }, 'user');
+      beginLiveWork(model);
+      const pending = addMessage({ blocks: [{ text: 'Claw is working…' }] }, 'assistant');
+      pending.classList.add('pending');
+      $('prompt').value = '';
+      $('send').disabled = true;
+      setActivity({ activities: [{ label: `Running ${model}`, detail: 'Starting live work log', is_error: false }] });
+      scrollChat();
+      try {
+        const response = await fetch(`/sessions/${state.id}/prompt`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ prompt, model })
+        });
+        const data = await response.json();
+        pending.remove();
+        if (!response.ok) throw Error(data.error || 'Prompt failed');
+        finishLiveWork(data.run);
+        addMessage(data.message, 'assistant');
+        state.runs.push(data.run);
+        setActivity(data.run);
+        $('count').textContent = Number($('count').textContent) + 2;
+        await refreshSessions();
+      } catch (error) {
+        pending.textContent = error.message;
+        pending.classList.remove('pending');
+        pending.classList.add('error');
+        failLiveWork(error);
+        setActivity({ activities: [{ label: 'Run failed', detail: error.message, is_error: true }] });
+      } finally {
+        $('send').disabled = false;
+        $('prompt').focus();
+        scrollChat();
+      }
+    };
+
     setInterval(() => refreshAgents().catch(() => {}), 2500);
     setInterval(() => refreshRuntimeStatus().catch(() => { $('runtime').textContent = 'runtime unavailable'; }), 5000);
     refreshAgents().catch(() => {});
