@@ -752,6 +752,8 @@ fn prompt_with_history(prompt: &str, conversation: &RuntimeSession) -> String {
         .map(|path| path.display().to_string())
         .unwrap_or_else(|_| ".".to_string());
     let mut history = String::new();
+    let mut previous_user_text: Option<String> = None;
+
     for message in &conversation.messages {
         let role = match message.role {
             MessageRole::System => "system",
@@ -760,30 +762,51 @@ fn prompt_with_history(prompt: &str, conversation: &RuntimeSession) -> String {
             MessageRole::Tool => "tool",
         };
         for block in &message.blocks {
-            let text = match block {
-                ContentBlock::Text { text } => text.as_str(),
+            match block {
+                ContentBlock::Text { text } => {
+                    if message.role == MessageRole::User {
+                        let trimmed = text.trim();
+                        if previous_user_text.as_deref() == Some(trimmed) {
+                            continue;
+                        }
+                        previous_user_text = Some(trimmed.to_string());
+                    } else if message.role != MessageRole::System {
+                        previous_user_text = None;
+                    }
+                    history.push_str(role);
+                    history.push_str(": ");
+                    history.push_str(text);
+                    history.push('\n');
+                }
                 ContentBlock::ToolUse { name, input, .. } => {
+                    previous_user_text = None;
                     history.push_str(&format!("{role} tool call {name}: {input}\n"));
-                    continue;
                 }
                 ContentBlock::ToolResult {
                     tool_name, output, ..
                 } => {
+                    previous_user_text = None;
                     history.push_str(&format!("tool result {tool_name}: {output}\n"));
-                    continue;
                 }
-            };
-            history.push_str(role);
-            history.push_str(": ");
-            history.push_str(text);
-            history.push('\n');
+            }
         }
     }
-    let start = history.len().saturating_sub(MAX_HISTORY_CHARS);
-    let history = &history[start..];
+
+    let history = tail_chars(&history, MAX_HISTORY_CHARS);
     format!(
         "Continue this persisted Claw conversation. Do not repeat the transcript.\n\nWorkspace root: {workspace}\nTreat it as the root for all relative paths; do not guess nested project directories. Start repository discovery with glob_search, grep_search, and read_file. Use only tools that are exposed to you. Do not retry an unavailable tool or repeat an equivalent search after it has failed. For genuinely independent work, you may delegate up to two focused Agent tasks (Explorer for discovery, Architect for design, Coder for changes, Reviewer for review); do not delegate simple directory discovery.\n\n<conversation>\n{history}</conversation>\n\nCurrent request:\n{prompt}"
     )
+}
+
+fn tail_chars(value: &str, limit: usize) -> &str {
+    if value.chars().count() <= limit {
+        return value;
+    }
+    value
+        .char_indices()
+        .rev()
+        .nth(limit - 1)
+        .map_or(value, |(index, _)| &value[index..])
 }
 
 fn summarize_input(value: &Value) -> String {
@@ -823,8 +846,8 @@ fn internal_error(message: impl Into<String>) -> super::ApiError {
 #[cfg(test)]
 mod tests {
     use super::{
-        auto_executor_model, prompt_with_history, recover_failed_run, web_run_timeout_from_env,
-        DEFAULT_WEB_RUN_TIMEOUT,
+        auto_executor_model, prompt_with_history, recover_failed_run, tail_chars,
+        web_run_timeout_from_env, DEFAULT_WEB_RUN_TIMEOUT,
     };
     use runtime::{ConversationMessage, Session};
 
@@ -837,6 +860,45 @@ mod tests {
         let prompt = prompt_with_history("What did I ask?", &session);
         assert!(prompt.contains("user: Remember Rust"));
         assert!(prompt.ends_with("Current request:\nWhat did I ask?"));
+    }
+
+    #[test]
+    fn collapses_consecutive_duplicate_user_messages() {
+        let mut session = Session::new();
+        session
+            .messages
+            .push(ConversationMessage::user_text("Do this once"));
+        session
+            .messages
+            .push(ConversationMessage::user_text("Do this once"));
+        let prompt = prompt_with_history("Continue", &session);
+        assert_eq!(prompt.matches("user: Do this once").count(), 1);
+    }
+
+    #[test]
+    fn preserves_repeated_user_requests_when_interleaved_with_assistant_output() {
+        let mut session = Session::new();
+        session
+            .messages
+            .push(ConversationMessage::user_text("Repeat later"));
+        session.messages.push(ConversationMessage::assistant(vec![
+            runtime::ContentBlock::Text {
+                text: "Acknowledged".to_string(),
+            },
+        ]));
+        session
+            .messages
+            .push(ConversationMessage::user_text("Repeat later"));
+        let prompt = prompt_with_history("Continue", &session);
+        assert_eq!(prompt.matches("user: Repeat later").count(), 2);
+    }
+
+    #[test]
+    fn tail_history_is_utf8_safe() {
+        let value = "前文".repeat(10);
+        let tail = tail_chars(&value, 7);
+        assert_eq!(tail.chars().count(), 7);
+        assert!(tail.chars().all(|ch| ch == '文' || ch == '前'));
     }
 
     #[test]
