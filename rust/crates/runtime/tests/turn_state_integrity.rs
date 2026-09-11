@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use runtime::{
     ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, MessageRole, PermissionMode,
     PermissionPolicy, RuntimeError, Session, StaticToolExecutor,
@@ -53,6 +55,65 @@ fn keeps_completed_tool_state_when_the_next_provider_call_fails() {
     assert!(matches!(runtime.session().messages[2].role, MessageRole::Tool));
 }
 
+struct FinalizesAtToolLimitApi {
+    calls: usize,
+}
+
+impl ApiClient for FinalizesAtToolLimitApi {
+    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+        self.calls += 1;
+        if request
+            .system_prompt
+            .iter()
+            .any(|section| section.contains("FINALIZATION PASS"))
+        {
+            return Ok(vec![
+                AssistantEvent::TextDelta(
+                    "Completed: two tool iterations.\nRemaining: none known.\nValidation: tool results were collected.\nBlockers: none reported.".to_string(),
+                ),
+                AssistantEvent::MessageStop,
+            ]);
+        }
+
+        Ok(vec![
+            AssistantEvent::ToolUse {
+                id: format!("tool-{}", self.calls),
+                name: "echo".to_string(),
+                input: "continue".to_string(),
+            },
+            AssistantEvent::MessageStop,
+        ])
+    }
+}
+
+#[test]
+fn iteration_limit_enters_finalization_instead_of_returning_an_error() {
+    let mut runtime = ConversationRuntime::new(
+        Session::new(),
+        FinalizesAtToolLimitApi { calls: 0 },
+        StaticToolExecutor::new().register("echo", |input| Ok(input.to_string())),
+        PermissionPolicy::new(PermissionMode::DangerFullAccess),
+        vec!["system".to_string()],
+    )
+    .with_max_iterations(2);
+
+    let summary = runtime
+        .run_turn("keep going", None)
+        .expect("iteration limit should hand off to finalization");
+
+    assert_eq!(summary.iterations, 3);
+    assert!(summary
+        .assistant_messages
+        .last()
+        .expect("final assistant message")
+        .blocks
+        .iter()
+        .any(|block| matches!(
+            block,
+            runtime::ContentBlock::Text { text } if text.contains("Completed:")
+        )));
+}
+
 struct AlwaysRequestsToolApi {
     calls: usize,
 }
@@ -73,28 +134,35 @@ impl ApiClient for AlwaysRequestsToolApi {
 }
 
 #[test]
-fn iteration_exhaustion_leaves_a_resumable_completed_tool_turn() {
+fn repeated_tool_requests_during_finalization_are_not_executed() {
+    let executions = Arc::new(Mutex::new(0usize));
+    let executions_for_tool = Arc::clone(&executions);
     let mut runtime = ConversationRuntime::new(
         Session::new(),
         AlwaysRequestsToolApi { calls: 0 },
-        StaticToolExecutor::new().register("echo", |input| Ok(input.to_string())),
+        StaticToolExecutor::new().register("echo", move |input| {
+            *executions_for_tool.lock().expect("counter lock") += 1;
+            Ok(input.to_string())
+        }),
         PermissionPolicy::new(PermissionMode::DangerFullAccess),
         vec!["system".to_string()],
     )
-    .with_max_iterations(2);
+    .with_max_iterations(1);
 
-    let error = runtime
+    let summary = runtime
         .run_turn("keep going", None)
-        .expect_err("loop should stop at the configured iteration bound");
-    assert_eq!(
-        error.to_string(),
-        "conversation loop exceeded the maximum number of iterations"
-    );
+        .expect("bounded finalization should return without executing finalization tools");
 
-    assert_eq!(runtime.session().messages.len(), 5);
-    assert_eq!(runtime.session().messages[0].role, MessageRole::User);
-    assert_eq!(runtime.session().messages[1].role, MessageRole::Assistant);
-    assert_eq!(runtime.session().messages[2].role, MessageRole::Tool);
-    assert_eq!(runtime.session().messages[3].role, MessageRole::Assistant);
-    assert_eq!(runtime.session().messages[4].role, MessageRole::Tool);
+    assert_eq!(summary.iterations, 5);
+    assert_eq!(*executions.lock().expect("counter lock"), 1);
+    assert!(summary
+        .assistant_messages
+        .last()
+        .expect("fallback assistant message")
+        .blocks
+        .iter()
+        .any(|block| matches!(
+            block,
+            runtime::ContentBlock::Text { text } if text.contains("configured tool-iteration budget")
+        )));
 }
