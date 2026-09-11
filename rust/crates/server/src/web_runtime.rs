@@ -91,7 +91,7 @@ pub async fn run_prompt(
                 &command_session_id,
                 &command_broadcaster,
                 &existing_sessions,
-                error.0.error,
+                error.1.0.error,
             )),
         }
     })
@@ -193,12 +193,7 @@ fn recover_failed_run(
             result
         }
         Err(error) => {
-            let recovery_failure = error
-                .1
-                .0
-                .error
-                .trim()
-                .to_string();
+            let recovery_failure = error.1.0.error.trim().to_string();
             let detail = if recovery_failure.is_empty() {
                 failure.clone()
             } else {

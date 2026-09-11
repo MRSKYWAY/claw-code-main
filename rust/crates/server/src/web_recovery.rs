@@ -98,7 +98,7 @@ pub(crate) fn failure_recovery_prompt(
     let history = conversation
         .messages
         .iter()
-        .map(|message| {
+        .filter_map(|message| {
             let role = match message.role {
                 MessageRole::System => "system",
                 MessageRole::User => "user",
