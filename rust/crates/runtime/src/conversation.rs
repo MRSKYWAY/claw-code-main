@@ -83,6 +83,7 @@ pub struct TurnSummary {
 const MAX_FINALIZATION_ATTEMPTS: usize = 3;
 const FINALIZATION_SYSTEM_INSTRUCTION: &str = "FINALIZATION PASS: The configured tool-iteration budget has been reached. Do not use any more tools or modify the workspace. Based only on the work already completed in this conversation, provide the final response now. Use these headings exactly: Completed, Remaining, Validation, Blockers. State clearly what was changed, what remains unfinished, what validation succeeded or could not be completed, and any known blocker. Do not claim completion for work you could not verify.";
 const FINALIZATION_TOOL_BLOCK_MESSAGE: &str = "The tool-iteration budget has been reached, so tools are disabled for this finalization pass. Stop calling tools and provide the requested final response with Completed, Remaining, Validation, and Blockers.";
+const FINALIZATION_FALLBACK_MESSAGE: &str = "Completed: the configured tool-iteration budget was consumed and completed tool results were preserved.\nRemaining: the model did not provide a final synthesis, so the exact remaining work could not be confirmed.\nValidation: all tool results produced before finalization remain in the session.\nBlockers: the model continued requesting tools during the bounded finalization pass.";
 
 pub struct ConversationRuntime<C, T> {
     session: Session,
@@ -184,12 +185,12 @@ where
             if finalization_mode {
                 finalization_attempts += 1;
                 if finalization_attempts > MAX_FINALIZATION_ATTEMPTS {
-                    return Ok(TurnSummary {
-                        assistant_messages,
-                        tool_results,
-                        iterations,
-                        usage: self.usage_tracker.cumulative_usage(),
-                    });
+                    let fallback_message = ConversationMessage::assistant(vec![ContentBlock::Text {
+                        text: FINALIZATION_FALLBACK_MESSAGE.to_string(),
+                    }]);
+                    self.session.messages.push(fallback_message.clone());
+                    assistant_messages.push(fallback_message);
+                    break;
                 }
             }
 
