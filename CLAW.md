@@ -20,6 +20,13 @@ This file provides guidance to Claw Code when working with code in this reposito
 - Keep shared defaults in `.claw.json`; reserve `.claw/settings.local.json` for machine-local overrides.
 - Do not overwrite existing `CLAW.md` content automatically; update it intentionally when repo workflows change.
 
+## Path and context boundaries
+- Treat the repository workspace root as the default base for relative paths, but never reinterpret an explicit absolute path supplied by the user.
+- When a task names an absolute path outside the repository (for example, a source file in another project), use that exact path for the requested read or comparison.
+- Keep the current repository root and any external task paths conceptually separate; do not replace an external target with a similarly named file inside this repository.
+- In persisted conversations, distinguish the latest user request from older transcript history. Do not repeat or treat duplicated historical user messages as new requests.
+- When workspace context and an explicit user path appear to conflict, the explicit user path wins for that file or directory operation.
+
 ## Completion and anti-thrashing policy
 - Optimize for reaching a completed result and returning the final response rather than maximizing tool usage.
 - Stop using tools as soon as the requested change is sufficiently complete and validated.
