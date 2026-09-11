@@ -120,8 +120,8 @@ struct ClawRunResult {
 const DEFAULT_WEB_RUN_TIMEOUT: Duration = Duration::from_secs(900);
 const AUTO_MODEL: &str = "claw-auto";
 const AUTO_MAX_TOTAL_TIME: Duration = Duration::from_secs(900);
-const AUTO_SCOUT_MAX_TIME: Duration = Duration::from_secs(30);
-const LIVE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3);
+const AUTO_SCOUT_MAX_TIME: Duration = Duration::from_secs(900);
+const LIVE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const SCOUT_TOOLS: &str = "read_file,glob_search,grep_search";
 
 type SessionBroadcaster = broadcast::Sender<super::SessionEvent>;
@@ -147,7 +147,7 @@ fn execute_claw(
         model,
         &command_prompt,
         None,
-        8,
+        64,
         web_run_timeout(),
         "Claw",
         session_id,
@@ -165,13 +165,13 @@ fn execute_auto(
     let executor_timeout = total_budget.saturating_sub(scout_timeout);
     let scout_model = auto_scout_model()?;
     let scout_prompt = format!(
-        "You are the scout in a two-stage coding task. Inspect only enough of the workspace to hand off the task below. Use at most four tool calls and only the supplied read/search tools. Do not use a shell, web search, agents, edits, tests, or broad recursive investigation. Do not retry failures. Return exactly: relevant files, existing behavior, and the smallest next step.\n\nTask:\n{prompt}"
+        "You are the scout in a two-stage coding task. Inspect only enough of the workspace to hand off the task below. Use at most 64 tool calls and only the supplied read/search tools. Do not use a shell, web search, agents, edits, tests, or broad recursive investigation. Do not retry failures. Return exactly: relevant files, existing behavior, and the smallest next step.\n\nTask:\n{prompt}"
     );
     let scout = execute_claw_process(
         scout_model,
         &scout_prompt,
         Some(SCOUT_TOOLS),
-        4,
+        64,
         scout_timeout,
         "Claw scout",
         session_id,
@@ -196,13 +196,13 @@ fn execute_auto(
         ),
     };
     let executor_prompt = format!(
-        "You are the executor in a two-stage coding task. Use the scout report as a narrow map, then complete the user request. Work only on files identified by the scout unless a required dependency forces one additional lookup. Use at most eight tool calls. Do not redo broad repository discovery, do not use web search, do not launch agents, and never retry a failed tool. If the scout is incomplete, make one targeted glob/grep lookup, then proceed. Finish with a direct answer or a concise summary of the change.\n\n<Scout report>\n{scout_report}\n</Scout report>\n\n<User task>\n{prompt}\n</User task>"
+        "You are the executor in a two-stage coding task. Use the scout report as a narrow map, then complete the user request. Work only on files identified by the scout unless a required dependency forces one additional lookup. Use at most 64 tool calls. Do not redo broad repository discovery, do not use web search, do not launch agents, and never retry a failed tool. If the scout is incomplete, make one targeted glob/grep lookup, then proceed. Finish with a direct answer or a concise summary of the change.\n\n<Scout report>\n{scout_report}\n</Scout report>\n\n<User task>\n{prompt}\n</User task>"
     );
     let executor = execute_claw_process(
         auto_executor_model(prompt),
         &executor_prompt,
         Some(executor_tools()),
-        8,
+        64,
         executor_timeout,
         "Claw executor",
         session_id,
