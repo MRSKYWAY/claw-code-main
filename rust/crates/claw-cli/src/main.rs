@@ -43,7 +43,19 @@ use runtime::{
 use serde_json::json;
 use tools::GlobalToolRegistry;
 
-const DEFAULT_MODEL: &str = "nvidia-agent";
+fn has_env_key(name: &str) -> bool {
+    env::var_os(name).is_some_and(|value| !value.is_empty())
+}
+
+fn default_model() -> &'static str {
+    if has_env_key("NVIDIA_API_KEY") {
+        "nvidia-agent"
+    } else if has_env_key("GEMINI_API_KEY") {
+        "gemini-flash"
+    } else {
+        "claude-opus-4-6"
+    }
+}
 fn max_tokens_for_model(model: &str) -> u32 {
     api::max_tokens_for_model(model)
 }
@@ -191,7 +203,7 @@ impl CliOutputFormat {
 
 #[allow(clippy::too_many_lines)]
 fn parse_args(args: &[String]) -> Result<CliAction, String> {
-    let mut model = DEFAULT_MODEL.to_string();
+    let mut model = default_model().to_string();
     let mut output_format = CliOutputFormat::Text;
     let mut permission_mode = default_permission_mode();
     let mut wants_version = false;

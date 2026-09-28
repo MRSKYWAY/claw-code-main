@@ -45,16 +45,20 @@ cargo run --bin claw -- login
 
 ### Optional Jev tool-call guard
 
-Claw can use TypeSafe AI's Jev System One model as an opt-in decision gate before
-executing tools that the existing permission policy has already allowed.
+Jev is an optional TypeSafe AI decision gate that runs only after Claw's existing
+permission policy has already allowed a tool call. It is disabled by default, so
+Claw works normally when Jev is not installed or configured.
 
-Set the official TypeSafe API key:
+For the complete NVIDIA + Jev setup, including provider fallback and local
+configuration, see [`NVIDIA_JEV_SETUP.md`](NVIDIA_JEV_SETUP.md).
+
+Set `TYPESAFE_API_KEY` only when you intend to enable Jev:
 
 ```bash
 export TYPESAFE_API_KEY="..."
 ```
 
-Enable the guard in `.claw/settings.json`:
+Enable it in project-local `.claw/settings.local.json`:
 
 ```json
 {
@@ -65,16 +69,9 @@ Enable the guard in `.claw/settings.json`:
 }
 ```
 
-Jev receives the requested tool name, tool input, and workspace path. It asks a
-typed yes/no question and maps the returned probability to three deterministic
-outcomes: allow (>= 0.85), confirm (>= 0.45), or deny (< 0.45). Confirmation
-reuses Claw's existing permission prompt. If Jev is enabled but unavailable, the
-tool call is blocked rather than executed without the guard.
-
-The guard is deliberately separate from the model-provider catalog: Jev returns
-typed decisions, not chat messages, and is not treated as a conversational model.
-The official endpoint is `https://api.typesafe.ai/v1/systemone`; set
-`TYPESAFE_API_BASE_URL` only when pointing Claw at a compatible test endpoint.
+When Jev is explicitly enabled but unavailable, Claw fails closed and blocks the
+guarded tool call. When Jev is disabled or absent, the existing permission and
+hook pipeline is unchanged.
 
 ### Install locally
 
@@ -165,7 +162,7 @@ Parallelize only read-only discovery and review work. Keep writing agents sequen
 - NVIDIA Build models use the OpenAI-compatible chat-completions endpoint. The NVIDIA aliases are `nvidia-fast` (`nvidia/nemotron-3.5-lightning-30b-a3b`), `nvidia-plan` (`moonshotai/kimi-k3`), `nvidia-agent` (`nvidia/nemotron-3-ultra-550b-a55b`), and `nvidia-long` (`nvidia/nemotron-3-ultra-550b-a55b`).
 - Gemini aliases are `gemini-flash` (`gemini-3.8-flash`) and `gemini-pro` (`gemini-3.1-pro-preview`). Gemini uses the standard content-generation endpoint with synthesized streaming in this release.
 - Run `claw models --check` after setting `NVIDIA_API_KEY` or `GEMINI_API_KEY` to verify current account availability without exposing key material.
-- Background agents automatically route to lighter or specialized NVIDIA aliases when `NVIDIA_API_KEY` is configured and no explicit agent model is requested. This keeps exploration and planning work off the local machine and caps each agent type to a smaller iteration budget.
+- Background agents use NVIDIA aliases when `NVIDIA_API_KEY` is configured, Gemini when `GEMINI_API_KEY` is configured, and the normal Claw provider otherwise.
 - MCP extensions can be added as standalone stdio servers, including the bundled Telegram Bot API server with persistent lead memory documented in [`docs/telegram-mcp.md`](docs/telegram-mcp.md)
 
 ## Current limitations
