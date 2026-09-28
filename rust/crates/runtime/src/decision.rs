@@ -1,10 +1,11 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
 
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+
 
 use crate::config::RuntimeJevConfig;
 
@@ -13,7 +14,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_millis(1_500);
 const ALLOW_THRESHOLD: f64 = 0.85;
 const CONFIRM_THRESHOLD: f64 = 0.45;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolDecision {
     Allow,
     Confirm,
@@ -74,15 +75,12 @@ struct JevNoulQuestion {
 
 #[derive(Debug, Deserialize)]
 struct JevResponse {
-    answers: std::collections::BTreeMap<String, JevAnswer>,
+    answers: BTreeMap<String, JevAnswer>,
 }
 
 #[derive(Debug, Deserialize)]
 struct JevAnswer {
     noul: Option<f64>,
-    #[allow(dead_code)]
-    #[serde(flatten)]
-    extra: std::collections::BTreeMap<String, Value>,
 }
 
 impl JevDecisionProvider {
@@ -101,7 +99,9 @@ impl JevDecisionProvider {
 
         Self {
             client,
-            api_key: env::var("TYPESAFE_API_KEY").ok().filter(|value| !value.trim().is_empty()),
+            api_key: env::var("TYPESAFE_API_KEY")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
             model: config.model().to_string(),
             endpoint: format!("{}/v1/systemone", base_url.trim_end_matches('/')),
         }
