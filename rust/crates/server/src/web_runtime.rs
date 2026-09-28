@@ -300,28 +300,35 @@ fn execute_auto(
 fn auto_scout_model() -> Result<&'static str, super::ApiError> {
     if has_env_key("NVIDIA_API_KEY") {
         Ok("nvidia-fast")
+    } else if has_env_key("GEMINI_API_KEY") {
+        Ok("gemini-flash")
     } else {
-        Err(internal_error("Claw Auto requires NVIDIA_API_KEY"))
+        Ok("claude-opus-4-6")
     }
 }
 
 fn auto_executor_model(prompt: &str) -> &'static str {
     let normalized = prompt.to_ascii_lowercase();
-    if [
-        "architecture",
-        "architect",
-        "design a plan",
-        "implementation plan",
-    ]
-    .iter()
-    .any(|term| normalized.contains(term))
-    {
-        "nvidia-plan"
+    if has_env_key("NVIDIA_API_KEY") {
+        if [
+            "architecture",
+            "architect",
+            "design a plan",
+            "implementation plan",
+        ]
+        .iter()
+        .any(|term| normalized.contains(term))
+        {
+            "nvidia-plan"
+        } else {
+            "nvidia-agent"
+        }
+    } else if has_env_key("GEMINI_API_KEY") {
+        "gemini-pro"
     } else {
-        "nvidia-agent"
+        "claude-opus-4-6"
     }
 }
-
 fn has_env_key(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|value| !value.is_empty())
 }
