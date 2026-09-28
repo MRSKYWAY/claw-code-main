@@ -43,6 +43,39 @@ OAuth login is also available:
 cargo run --bin claw -- login
 ```
 
+### Optional Jev tool-call guard
+
+Claw can use TypeSafe AI's Jev System One model as an opt-in decision gate before
+executing tools that the existing permission policy has already allowed.
+
+Set the official TypeSafe API key:
+
+```bash
+export TYPESAFE_API_KEY="..."
+```
+
+Enable the guard in `.claw/settings.json`:
+
+```json
+{
+  "jev": {
+    "enabled": true,
+    "model": "jev-1.13.0"
+  }
+}
+```
+
+Jev receives the requested tool name, tool input, and workspace path. It asks a
+typed yes/no question and maps the returned probability to three deterministic
+outcomes: allow (>= 0.85), confirm (>= 0.45), or deny (< 0.45). Confirmation
+reuses Claw's existing permission prompt. If Jev is enabled but unavailable, the
+tool call is blocked rather than executed without the guard.
+
+The guard is deliberately separate from the model-provider catalog: Jev returns
+typed decisions, not chat messages, and is not treated as a conversational model.
+The official endpoint is `https://api.typesafe.ai/v1/systemone`; set
+`TYPESAFE_API_BASE_URL` only when pointing Claw at a compatible test endpoint.
+
 ### Install locally
 
 ```bash

@@ -44,6 +44,21 @@ pub struct RuntimePluginConfig {
     bundled_root: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeJevConfig {
+    enabled: bool,
+    model: String,
+}
+
+impl Default for RuntimeJevConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: "jev-1.13.0".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RuntimeFeatureConfig {
     hooks: RuntimeHookConfig,
@@ -51,6 +66,7 @@ pub struct RuntimeFeatureConfig {
     mcp: McpConfigCollection,
     oauth: Option<OAuthConfig>,
     model: Option<String>,
+    jev: RuntimeJevConfig,
     permission_mode: Option<ResolvedPermissionMode>,
     sandbox: SandboxConfig,
 }
@@ -247,6 +263,7 @@ impl ConfigLoader {
             },
             oauth: parse_optional_oauth_config(&merged_value, "merged settings.oauth")?,
             model: parse_optional_model(&merged_value),
+            jev: parse_optional_jev_config(&merged_value)?,
             permission_mode: parse_optional_permission_mode(&merged_value)?,
             sandbox: parse_optional_sandbox_config(&merged_value)?,
         };
@@ -320,6 +337,11 @@ impl RuntimeConfig {
     }
 
     #[must_use]
+    pub fn jev(&self) -> &RuntimeJevConfig {
+        &self.feature_config.jev
+    }
+
+    #[must_use]
     pub fn permission_mode(&self) -> Option<ResolvedPermissionMode> {
         self.feature_config.permission_mode
     }
@@ -327,6 +349,18 @@ impl RuntimeConfig {
     #[must_use]
     pub fn sandbox(&self) -> &SandboxConfig {
         &self.feature_config.sandbox
+    }
+}
+
+impl RuntimeJevConfig {
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    #[must_use]
+    pub fn model(&self) -> &str {
+        &self.model
     }
 }
 
@@ -366,6 +400,11 @@ impl RuntimeFeatureConfig {
     #[must_use]
     pub fn model(&self) -> Option<&str> {
         self.model.as_deref()
+    }
+
+    #[must_use]
+    pub fn jev(&self) -> &RuntimeJevConfig {
+        &self.jev
     }
 
     #[must_use]
@@ -554,6 +593,29 @@ fn parse_optional_model(root: &JsonValue) -> Option<String> {
         .and_then(|object| object.get("model"))
         .and_then(JsonValue::as_str)
         .map(ToOwned::to_owned)
+}
+
+fn parse_optional_jev_config(root: &JsonValue) -> Result<RuntimeJevConfig, ConfigError> {
+    let Some(object) = root.as_object() else {
+        return Ok(RuntimeJevConfig::default());
+    };
+    let Some(jev_value) = object.get("jev") else {
+        return Ok(RuntimeJevConfig::default());
+    };
+    let jev = expect_object(jev_value, "merged settings.jev")?;
+    let mut config = RuntimeJevConfig::default();
+    if let Some(enabled) = optional_bool(jev, "enabled", "merged settings.jev")? {
+        config.enabled = enabled;
+    }
+    if let Some(model) = optional_string(jev, "model", "merged settings.jev")? {
+        if model.trim().is_empty() {
+            return Err(ConfigError::Parse(
+                "merged settings.jev.model must not be empty".to_string(),
+            ));
+        }
+        config.model = model.to_string();
+    }
+    Ok(config)
 }
 
 fn parse_optional_hooks_config(root: &JsonValue) -> Result<RuntimeHookConfig, ConfigError> {
