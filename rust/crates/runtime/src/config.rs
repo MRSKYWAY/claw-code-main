@@ -352,6 +352,18 @@ impl RuntimeConfig {
     }
 }
 
+impl RuntimeJevConfig {
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    #[must_use]
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+}
+
 impl RuntimeFeatureConfig {
     #[must_use]
     pub fn with_hooks(mut self, hooks: RuntimeHookConfig) -> Self {
