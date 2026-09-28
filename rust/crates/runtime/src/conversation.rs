@@ -6,8 +6,11 @@ use crate::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
 };
 use crate::config::RuntimeFeatureConfig;
+use crate::decision::{JevDecisionProvider, ToolDecision};
 use crate::hooks::{HookRunResult, HookRunner};
-use crate::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter, ToolPolicyDecision};
+use crate::permissions::{
+    PermissionOutcome, PermissionPolicy, PermissionPrompter, PermissionRequest, ToolPolicyDecision,
+};
 use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
 
@@ -95,6 +98,7 @@ pub struct ConversationRuntime<C, T> {
     max_iterations: usize,
     usage_tracker: UsageTracker,
     hook_runner: HookRunner,
+    jev_provider: Option<JevDecisionProvider>,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -130,6 +134,10 @@ where
         feature_config: &RuntimeFeatureConfig,
     ) -> Self {
         let usage_tracker = UsageTracker::from_session(&session);
+        let jev_provider = feature_config
+            .jev()
+            .enabled()
+            .then(|| JevDecisionProvider::from_config(feature_config.jev()));
         Self {
             session,
             api_client,
@@ -139,6 +147,7 @@ where
             max_iterations: 8,
             usage_tracker,
             hook_runner: HookRunner::from_feature_config(feature_config),
+            jev_provider,
         }
     }
 
@@ -281,6 +290,55 @@ where
                     &permission_outcome,
                     &pre_hook_result,
                 );
+
+                let policy_decision = if matches!(policy_decision, ToolPolicyDecision::Allow) {
+                    match &self.jev_provider {
+                        None => policy_decision,
+                        Some(jev) => match jev.assess_tool(
+                            &tool_name,
+                            &input,
+                            std::env::current_dir()
+                                .ok()
+                                .and_then(|path| path.to_str().map(str::to_string))
+                                .as_deref(),
+                        ) {
+                            Ok(ToolDecision::Allow) => ToolPolicyDecision::Allow,
+                            Ok(ToolDecision::Confirm) => {
+                                let decision = prompter.as_mut().map(|prompt| {
+                                    prompt.decide(&PermissionRequest {
+                                        tool_name: tool_name.clone(),
+                                        input: input.clone(),
+                                        current_mode: self.permission_policy.active_mode(),
+                                        required_mode: self
+                                            .permission_policy
+                                            .required_mode_for(&tool_name),
+                                    })
+                                });
+                                match decision {
+                                    Some(crate::permissions::PermissionPromptDecision::Allow) => {
+                                        ToolPolicyDecision::Allow
+                                    }
+                                    Some(crate::permissions::PermissionPromptDecision::Deny { reason }) => {
+                                        ToolPolicyDecision::PermissionDenied { reason }
+                                    }
+                                    None => ToolPolicyDecision::PermissionDenied {
+                                        reason: "Jev requested confirmation, but no permission prompter is available".to_string(),
+                                    },
+                                }
+                            }
+                            Ok(ToolDecision::Deny) => ToolPolicyDecision::PermissionDenied {
+                                reason: "Jev denied automatic execution of this tool call".to_string(),
+                            },
+                            Err(error) => ToolPolicyDecision::PermissionDenied {
+                                reason: format!(
+                                    "Jev guard failed; tool execution was blocked: {error}"
+                                ),
+                            },
+                        },
+                    }
+                } else {
+                    policy_decision
+                };
 
                 let result_message = match policy_decision {
                     ToolPolicyDecision::Allow => {
