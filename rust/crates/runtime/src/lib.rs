@@ -3,6 +3,7 @@ mod bootstrap;
 mod cancellation;
 mod compact;
 mod config;
+mod decision;
 mod conversation;
 mod file_ops;
 mod hooks;
@@ -29,6 +30,7 @@ pub use compact::{
     compact_session, estimate_session_tokens, format_compact_summary,
     get_compact_continuation_message, should_compact, CompactionConfig, CompactionResult,
 };
+pub use decision::{classify_tool_probability, DecisionError, JevDecisionProvider, ToolDecision};
 pub use config::{
     ConfigEntry, ConfigError, ConfigLoader, ConfigSource, McpConfigCollection,
     McpManagedProxyServerConfig, McpOAuthConfig, McpRemoteServerConfig, McpSdkServerConfig,
