@@ -291,16 +291,17 @@ where
                     &pre_hook_result,
                 );
 
-                let policy_decision = if matches!(policy_decision, ToolPolicyDecision::Allow) {
+                let workspace = std::env::current_dir()
+                    .ok()
+                    .map(|path| path.display().to_string());
+
+                let policy_decision = if matches!(&policy_decision, ToolPolicyDecision::Allow) {
                     match &self.jev_provider {
                         None => policy_decision,
                         Some(jev) => match jev.assess_tool(
                             &tool_name,
                             &input,
-                            std::env::current_dir()
-                                .ok()
-                                .and_then(|path| path.to_str().map(str::to_string))
-                                .as_deref(),
+                            workspace.as_deref(),
                         ) {
                             Ok(ToolDecision::Allow) => ToolPolicyDecision::Allow,
                             Ok(ToolDecision::Confirm) => {
