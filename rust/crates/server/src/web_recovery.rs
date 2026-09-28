@@ -11,10 +11,20 @@ pub(crate) const FAILURE_RECOVERY_TIMEOUT_SECS: u64 = 90;
 
 pub(crate) fn recovery_model(model: &str) -> &str {
     if model == "claw-auto" {
-        "nvidia-agent"
+        if has_env_key("NVIDIA_API_KEY") {
+            "nvidia-agent"
+        } else if has_env_key("GEMINI_API_KEY") {
+            "gemini-pro"
+        } else {
+            "claude-opus-4-6"
+        }
     } else {
         model
     }
+}
+
+fn has_env_key(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|value| !value.is_empty())
 }
 
 pub(crate) fn new_session_paths(existing: &HashSet<PathBuf>) -> Vec<PathBuf> {
