@@ -73,6 +73,17 @@ tool call is blocked rather than executed without the guard.
 
 The guard is deliberately separate from the model-provider catalog: Jev returns
 typed decisions, not chat messages, and is not treated as a conversational model.
+
+### Session-scoped filesystem exclusions
+
+A user can temporarily exclude a directory or path from the current session with a natural-language instruction such as:
+
+```text
+Go through the lecture slides. Do not search files in CEG5304_AY2627S1_CA1 directory for this session.
+```
+
+Claw records the exclusion on that session only. Native `read_file`, `write_file`, `edit_file`, `glob_search`, and `grep_search` enforce the exclusion at the filesystem boundary, including pruning excluded directories during recursive searches. It is not a global settings rule and does not affect future sessions. The CLI/web activity stream reports newly-added session exclusions.
+
 The official endpoint is `https://api.typesafe.ai/v1/systemone`; set
 `TYPESAFE_API_BASE_URL` only when pointing Claw at a compatible test endpoint.
 
