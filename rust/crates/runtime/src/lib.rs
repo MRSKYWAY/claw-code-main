@@ -46,7 +46,9 @@ pub use conversation::{
     ToolError, ToolExecutor, TurnSummary,
 };
 pub use file_ops::{
-    edit_file, glob_search, grep_search, read_file, write_file, EditFileOutput, GlobSearchOutput,
+    edit_file, edit_file_with_exclusions, glob_search, glob_search_with_exclusions, grep_search,
+    grep_search_with_exclusions, read_file, read_file_with_exclusions, write_file,
+    write_file_with_exclusions, EditFileOutput, GlobSearchOutput,
     GrepSearchInput, GrepSearchOutput, ReadFileOutput, StructuredPatchHunk, TextFilePayload,
     WriteFileOutput,
 };
