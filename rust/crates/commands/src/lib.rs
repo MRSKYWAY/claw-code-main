@@ -1946,7 +1946,7 @@ pub fn handle_slash_command(
         | SlashCommand::Cost
         | SlashCommand::Resume { .. }
         | SlashCommand::Config { .. }
-        | SlashCommand::Memory
+        | SlashCommand::Memory { .. }
         | SlashCommand::Init
         | SlashCommand::Diff
         | SlashCommand::Version
