@@ -83,6 +83,27 @@ Go through the lecture slides. Do not search files in CEG5304_AY2627S1_CA1 direc
 
 Claw records the exclusion on that session only. Native `read_file`, `write_file`, `edit_file`, `glob_search`, and `grep_search` enforce the exclusion at the filesystem boundary, including pruning excluded directories during recursive searches. It is not a global settings rule and does not affect future sessions. The CLI/web activity stream reports newly-added session exclusions.
 
+### Self-learning memory
+
+Claw now keeps a project-local learned-memory store at `.claw/memory.json`.
+After successful tool-using turns it records compact task experiences and reusable
+tool sequences; tool failures become failure lessons. Explicit preferences are only
+persisted when the user scopes them to the project/repository or says they should
+apply from now on, and session-only directives are ignored by the learned-memory
+store.
+
+Relevant memories are retrieved before a new turn and injected as advisory context.
+The memory layer never overrides permissions, hooks, Jev, or deterministic filesystem
+scope enforcement. Inspect or manage it from the REPL:
+
+```text
+/memory
+/memory search <query>
+/memory forget <id>
+/memory clear --confirm
+/memory instructions
+```
+
 ### Install locally
 
 ```bash
@@ -162,6 +183,7 @@ Parallelize only read-only discovery and review work. Keep writing agents sequen
 
 - Interactive REPL and one-shot prompt execution
 - Saved-session inspection and resume flows
+- Project-local self-learning memory with experience, strategy, lesson, and preference retrieval
 - Built-in workspace tools for shell, file read/write/edit, search, web fetch/search, todos, and notebook updates
 - Slash commands for status, compaction, config inspection, diff, export, session management, and version reporting
 - Local agent and skill discovery with `claw agents` and `claw skills`
