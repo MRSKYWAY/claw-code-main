@@ -611,9 +611,11 @@ fn path_is_excluded(path: &Path, excluded_paths: &[String]) -> bool {
             .into_owned();
 
         if cfg!(windows) {
-            candidate.eq_ignore_ascii_case(&excluded)
-                || candidate
-                    .strip_prefix(&excluded)
+            let candidate_lower = candidate.to_ascii_lowercase();
+            let excluded_lower = excluded.to_ascii_lowercase();
+            candidate_lower == excluded_lower
+                || candidate_lower
+                    .strip_prefix(&excluded_lower)
                     .is_some_and(|rest| rest.starts_with('\\') || rest.starts_with('/'))
         } else {
             candidate == excluded
