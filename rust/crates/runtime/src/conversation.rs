@@ -426,6 +426,10 @@ where
         &self.session
     }
 
+    pub fn set_system_prompt(&mut self, system_prompt: Vec<String>) {
+        self.system_prompt = system_prompt;
+    }
+
     #[must_use]
     pub fn into_session(self) -> Session {
         self.session
