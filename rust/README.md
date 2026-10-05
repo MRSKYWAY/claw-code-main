@@ -73,6 +73,16 @@ When Jev is explicitly enabled but unavailable, Claw fails closed and blocks the
 guarded tool call. When Jev is disabled or absent, the existing permission and
 hook pipeline is unchanged.
 
+### Session-scoped filesystem exclusions
+
+A user can temporarily exclude a directory or path from the current session with a natural-language instruction such as:
+
+```text
+Go through the lecture slides. Do not search files in CEG5304_AY2627S1_CA1 directory for this session.
+```
+
+Claw records the exclusion on that session only. Native `read_file`, `write_file`, `edit_file`, `glob_search`, and `grep_search` enforce the exclusion at the filesystem boundary, including pruning excluded directories during recursive searches. It is not a global settings rule and does not affect future sessions. The CLI/web activity stream reports newly-added session exclusions.
+
 ### Install locally
 
 ```bash
