@@ -228,7 +228,7 @@ impl MemoryStore {
                 } else {
                     let overlap = query_terms
                         .iter()
-                        .filter(|term| terms.contains(term))
+                        .filter(|term| terms.contains(term.as_str()))
                         .count();
                     if overlap == 0 {
                         return None;
@@ -617,10 +617,12 @@ mod tests {
         };
         let report = store.learn_from_turn("fix parser", &result);
         assert_eq!(report.created, 2);
-        assert!(store
+        let strategy = store
             .entries()
             .iter()
-            .any(|entry| entry.kind == MemoryKind::Strategy));
+            .find(|entry| entry.kind == MemoryKind::Strategy)
+            .expect("strategy should be recorded");
+        assert!(strategy.content.contains("read_file -> edit_file"));
     }
 
     #[test]
