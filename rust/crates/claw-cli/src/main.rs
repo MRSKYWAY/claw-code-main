@@ -1392,7 +1392,7 @@ impl LiveCli {
                 "iterations": summary.iterations,
                 "tool_uses": collect_tool_uses(&summary),
                 "tool_results": collect_tool_results(&summary),
-                "session_excluded_paths": runtime.session().excluded_paths(),
+                "session_excluded_paths": self.runtime.session().excluded_paths(),
                 "usage": {
                     "input_tokens": summary.usage.input_tokens,
                     "output_tokens": summary.usage.output_tokens,
