@@ -11,6 +11,7 @@ use crate::hooks::{HookRunResult, HookRunner};
 use crate::permissions::{
     PermissionOutcome, PermissionPolicy, PermissionPrompter, PermissionRequest, ToolPolicyDecision,
 };
+use crate::scope::apply_user_scope_constraints;
 use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
 
@@ -175,9 +176,11 @@ where
             return Err(RuntimeError::new("conversation turn cancelled"));
         }
 
+        let user_input = user_input.into();
+        apply_user_scope_constraints(&mut self.session, &user_input);
         self.session
             .messages
-            .push(ConversationMessage::user_text(user_input.into()));
+            .push(ConversationMessage::user_text(user_input));
 
         let mut assistant_messages = Vec::new();
         let mut tool_results = Vec::new();
@@ -209,6 +212,12 @@ where
             }
 
             let mut system_prompt = self.system_prompt.clone();
+            if !self.session.excluded_paths().is_empty() {
+                system_prompt.push(format!(
+                    "SESSION-SCOPED FILESYSTEM EXCLUSIONS: never access, read, write, edit, grep, or glob inside these paths for the rest of this session: {}",
+                    self.session.excluded_paths().join(", ")
+                ));
+            }
             if finalization_mode {
                 system_prompt.push(FINALIZATION_SYSTEM_INSTRUCTION.to_string());
             }
@@ -343,8 +352,10 @@ where
 
                 let result_message = match policy_decision {
                     ToolPolicyDecision::Allow => {
+                        let scoped_input =
+                            inject_session_scope_into_tool_input(&tool_name, &input, &self.session);
                         let (mut output, mut is_error) =
-                            match self.tool_executor.execute(&tool_name, &input) {
+                            match self.tool_executor.execute(&tool_name, &scoped_input) {
                                 Ok(output) => (output, false),
                                 Err(error) => (error.to_string(), true),
                             };
@@ -419,6 +430,43 @@ where
     pub fn into_session(self) -> Session {
         self.session
     }
+}
+
+fn inject_session_scope_into_tool_input(
+    tool_name: &str,
+    input: &str,
+    session: &Session,
+) -> String {
+    const SCOPED_TOOLS: &[&str] = &[
+        "read_file",
+        "write_file",
+        "edit_file",
+        "glob_search",
+        "grep_search",
+    ];
+
+    if session.excluded_paths().is_empty() || !SCOPED_TOOLS.contains(&tool_name) {
+        return input.to_string();
+    }
+
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(input) else {
+        return input.to_string();
+    };
+    let Some(object) = value.as_object_mut() else {
+        return input.to_string();
+    };
+    object.insert(
+        "session_excluded_paths".to_string(),
+        serde_json::Value::Array(
+            session
+                .excluded_paths()
+                .iter()
+                .cloned()
+                .map(serde_json::Value::String)
+                .collect(),
+        ),
+    );
+    serde_json::to_string(&value).unwrap_or_else(|_| input.to_string())
 }
 
 fn build_assistant_message(
