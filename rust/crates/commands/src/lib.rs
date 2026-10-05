@@ -2414,6 +2414,7 @@ mod tests {
                     text: "recent".to_string(),
                 }]),
             ],
+            ..Session::new()
         };
 
         let result = handle_slash_command(
