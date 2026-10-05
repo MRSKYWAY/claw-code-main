@@ -5,10 +5,8 @@ use crate::session::Session;
 const EXCLUSION_MARKERS: &[&str] = &[
     "do not search files in ", "don't search files in ", "dont search files in ",
     "do not search in ", "don't search in ", "dont search in ",
-    "do not inspect ", "don't inspect ", "dont inspect ",
-    "do not access ", "don't access ", "dont access ",
-    "do not read ", "don't read ", "dont read ",
-    "do not touch ", "don't touch ", "dont touch ",
+    "do not explore ", "don't explore ", "dont explore ",
+    "do not inspect files in ", "don't inspect files in ", "dont inspect files in ",
 ];
 
 pub fn apply_user_scope_constraints(session: &mut Session, user_input: &str) -> Vec<String> {
@@ -36,13 +34,22 @@ pub fn apply_user_scope_constraints(session: &mut Session, user_input: &str) -> 
 
 fn extract_target(tail: &str) -> Option<String> {
     let lower = tail.to_ascii_lowercase();
-    let mut end = lower.len();
-    for delimiter in [" directory", " folder", " for this session", ".\\n", "\\n", ".", "!", "?"] {
-        if let Some(index) = lower.find(delimiter) {
-            end = end.min(index);
-        }
-    }
-    let target = tail[..end].trim().trim_matches(['"', '\'', '`']).trim();
+    let end = lower
+        .find(" directory")
+        .or_else(|| lower.find(" folder"))
+        .or_else(|| lower.find(" for this session"))
+        .or_else(|| {
+            ["\n", ".", "!", "?"]
+                .iter()
+                .filter_map(|delimiter| lower.find(delimiter))
+                .min()
+        })
+        .unwrap_or(lower.len());
+
+    let target = tail[..end]
+        .trim()
+        .trim_matches(['"', '\'', char::from(96)])
+        .trim();
     (!target.is_empty()).then(|| target.to_string())
 }
 
