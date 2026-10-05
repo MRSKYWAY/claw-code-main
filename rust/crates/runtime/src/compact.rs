@@ -547,6 +547,7 @@ mod tests {
                     usage: None,
                 },
             ],
+            ..Session::new()
         };
 
         let result = compact_session(
@@ -615,6 +616,7 @@ mod tests {
             &Session {
                 version: 1,
                 messages: follow_up_messages,
+                ..Session::new()
             },
             config,
         );
@@ -661,6 +663,7 @@ mod tests {
                     text: "recent".to_string(),
                 }]),
             ],
+            ..Session::new()
         };
 
         assert!(!should_compact(
