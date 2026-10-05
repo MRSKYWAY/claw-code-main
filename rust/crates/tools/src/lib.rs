@@ -12,10 +12,12 @@ use api::{
 use plugins::PluginTool;
 use reqwest::blocking::Client;
 use runtime::{
-    edit_file, execute_bash, glob_search, grep_search, load_system_prompt, read_file, write_file,
-    ApiClient, ApiRequest, AssistantEvent, BashCommandInput, ContentBlock, ConversationMessage,
-    ConversationRuntime, GrepSearchInput, MessageRole, PermissionMode, PermissionPolicy,
-    CancellationToken, RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,
+    edit_file_with_exclusions, execute_bash, glob_search_with_exclusions,
+    grep_search_with_exclusions, load_system_prompt, read_file_with_exclusions,
+    write_file_with_exclusions, ApiClient, ApiRequest, AssistantEvent, BashCommandInput,
+    ContentBlock, ConversationMessage, ConversationRuntime, GrepSearchInput, MessageRole,
+    PermissionMode, PermissionPolicy, CancellationToken, RuntimeError, Session, TokenUsage,
+    ToolError, ToolExecutor,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -625,22 +627,38 @@ fn run_bash(input: BashCommandInput) -> Result<String, String> {
 
 #[allow(clippy::needless_pass_by_value)]
 fn run_read_file(input: ReadFileInput) -> Result<String, String> {
-    to_pretty_json(read_file(&input.path, input.offset, input.limit).map_err(io_to_string)?)
+    to_pretty_json(
+        read_file_with_exclusions(
+            &input.path,
+            input.offset,
+            input.limit,
+            &input.session_excluded_paths,
+        )
+        .map_err(io_to_string)?,
+    )
 }
 
 #[allow(clippy::needless_pass_by_value)]
 fn run_write_file(input: WriteFileInput) -> Result<String, String> {
-    to_pretty_json(write_file(&input.path, &input.content).map_err(io_to_string)?)
+    to_pretty_json(
+        write_file_with_exclusions(
+            &input.path,
+            &input.content,
+            &input.session_excluded_paths,
+        )
+        .map_err(io_to_string)?,
+    )
 }
 
 #[allow(clippy::needless_pass_by_value)]
 fn run_edit_file(input: EditFileInput) -> Result<String, String> {
     to_pretty_json(
-        edit_file(
+        edit_file_with_exclusions(
             &input.path,
             &input.old_string,
             &input.new_string,
             input.replace_all.unwrap_or(false),
+            &input.session_excluded_paths,
         )
         .map_err(io_to_string)?,
     )
@@ -648,12 +666,22 @@ fn run_edit_file(input: EditFileInput) -> Result<String, String> {
 
 #[allow(clippy::needless_pass_by_value)]
 fn run_glob_search(input: GlobSearchInputValue) -> Result<String, String> {
-    to_pretty_json(glob_search(&input.pattern, input.path.as_deref()).map_err(io_to_string)?)
+    to_pretty_json(
+        glob_search_with_exclusions(
+            &input.pattern,
+            input.path.as_deref(),
+            &input.session_excluded_paths,
+        )
+        .map_err(io_to_string)?,
+    )
 }
 
 #[allow(clippy::needless_pass_by_value)]
 fn run_grep_search(input: GrepSearchInput) -> Result<String, String> {
-    to_pretty_json(grep_search(&input).map_err(io_to_string)?)
+    to_pretty_json(
+        grep_search_with_exclusions(&input, &input.session_excluded_paths)
+            .map_err(io_to_string)?,
+    )
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -724,12 +752,16 @@ struct ReadFileInput {
     path: String,
     offset: Option<usize>,
     limit: Option<usize>,
+    #[serde(default)]
+    session_excluded_paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct WriteFileInput {
     path: String,
     content: String,
+    #[serde(default)]
+    session_excluded_paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -738,12 +770,16 @@ struct EditFileInput {
     old_string: String,
     new_string: String,
     replace_all: Option<bool>,
+    #[serde(default)]
+    session_excluded_paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct GlobSearchInputValue {
     pattern: String,
     path: Option<String>,
+    #[serde(default)]
+    session_excluded_paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
