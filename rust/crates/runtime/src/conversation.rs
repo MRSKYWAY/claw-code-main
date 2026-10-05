@@ -177,8 +177,7 @@ where
         }
 
         let user_input = user_input.into();
-        let newly_excluded = apply_user_scope_constraints(&mut self.session, &user_input);
-        let _ = newly_excluded;
+        apply_user_scope_constraints(&mut self.session, &user_input);
         self.session
             .messages
             .push(ConversationMessage::user_text(user_input));
