@@ -110,6 +110,8 @@ pub struct GrepSearchInput {
     pub head_limit: Option<usize>,
     pub offset: Option<usize>,
     pub multiline: Option<bool>,
+    #[serde(default)]
+    pub session_excluded_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -134,7 +136,17 @@ pub fn read_file(
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> io::Result<ReadFileOutput> {
+    read_file_with_exclusions(path, offset, limit, &[])
+}
+
+pub fn read_file_with_exclusions(
+    path: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    excluded_paths: &[String],
+) -> io::Result<ReadFileOutput> {
     let absolute_path = normalize_path(path)?;
+    ensure_path_allowed(&absolute_path, excluded_paths)?;
     let content = fs::read_to_string(&absolute_path)?;
     let lines: Vec<&str> = content.lines().collect();
     let start_index = offset.unwrap_or(0).min(lines.len());
@@ -156,7 +168,16 @@ pub fn read_file(
 }
 
 pub fn write_file(path: &str, content: &str) -> io::Result<WriteFileOutput> {
+    write_file_with_exclusions(path, content, &[])
+}
+
+pub fn write_file_with_exclusions(
+    path: &str,
+    content: &str,
+    excluded_paths: &[String],
+) -> io::Result<WriteFileOutput> {
     let absolute_path = normalize_path_allow_missing(path)?;
+    ensure_path_allowed(&absolute_path, excluded_paths)?;
     let original_file = fs::read_to_string(&absolute_path).ok();
     if let Some(parent) = absolute_path.parent() {
         fs::create_dir_all(parent)?;
@@ -183,7 +204,18 @@ pub fn edit_file(
     new_string: &str,
     replace_all: bool,
 ) -> io::Result<EditFileOutput> {
+    edit_file_with_exclusions(path, old_string, new_string, replace_all, &[])
+}
+
+pub fn edit_file_with_exclusions(
+    path: &str,
+    old_string: &str,
+    new_string: &str,
+    replace_all: bool,
+    excluded_paths: &[String],
+) -> io::Result<EditFileOutput> {
     let absolute_path = normalize_path(path)?;
+    ensure_path_allowed(&absolute_path, excluded_paths)?;
     let original_file = fs::read_to_string(&absolute_path)?;
     if old_string == new_string {
         return Err(io::Error::new(
@@ -218,6 +250,75 @@ pub fn edit_file(
 }
 
 pub fn glob_search(pattern: &str, path: Option<&str>) -> io::Result<GlobSearchOutput> {
+    glob_search_with_exclusions(pattern, path, &[])
+}
+
+pub fn glob_search_with_exclusions(
+    pattern: &str,
+    path: Option<&str>,
+    excluded_paths: &[String],
+) -> io::Result<GlobSearchOutput> {
+    if excluded_paths.is_empty() {
+        return glob_search_unscoped(pattern, path);
+    }
+
+    let started = Instant::now();
+    let base_dir = path
+        .map(normalize_path)
+        .transpose()?
+        .unwrap_or(std::env::current_dir()?);
+    ensure_path_allowed(&base_dir, excluded_paths)?;
+
+    let matcher = Pattern::new(pattern)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+    let (root, match_absolute) = glob_walk_root(pattern, &base_dir);
+    let mut matches = Vec::new();
+
+    for entry in WalkDir::new(&root).into_iter().filter_entry(|entry| {
+        !path_is_excluded(entry.path(), excluded_paths)
+    }) {
+        let entry = entry.map_err(|error| io::Error::other(error.to_string()))?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let relative = entry
+            .path()
+            .strip_prefix(&base_dir)
+            .unwrap_or(entry.path());
+        let matches_pattern = if match_absolute {
+            matcher.matches(&entry.path().to_string_lossy())
+                || matcher.matches_path(entry.path())
+        } else {
+            matcher.matches(&relative.to_string_lossy()) || matcher.matches_path(relative)
+        };
+        if matches_pattern {
+            matches.push(entry.path().to_path_buf());
+        }
+    }
+
+    matches.sort_by_key(|path| {
+        fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .map(Reverse)
+    });
+
+    let truncated = matches.len() > 100;
+    let filenames = matches
+        .into_iter()
+        .take(100)
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+    Ok(GlobSearchOutput {
+        duration_ms: started.elapsed().as_millis(),
+        num_files: filenames.len(),
+        filenames,
+        truncated,
+    })
+}
+
+fn glob_search_unscoped(pattern: &str, path: Option<&str>) -> io::Result<GlobSearchOutput> {
     let started = Instant::now();
     let base_dir = path
         .map(normalize_path)
@@ -261,12 +362,20 @@ pub fn glob_search(pattern: &str, path: Option<&str>) -> io::Result<GlobSearchOu
 }
 
 pub fn grep_search(input: &GrepSearchInput) -> io::Result<GrepSearchOutput> {
+    grep_search_with_exclusions(input, &[])
+}
+
+pub fn grep_search_with_exclusions(
+    input: &GrepSearchInput,
+    excluded_paths: &[String],
+) -> io::Result<GrepSearchOutput> {
     let base_path = input
         .path
         .as_deref()
         .map(normalize_path)
         .transpose()?
         .unwrap_or(std::env::current_dir()?);
+    ensure_path_allowed(&base_path, excluded_paths)?;
 
     let regex = RegexBuilder::new(&input.pattern)
         .case_insensitive(input.case_insensitive.unwrap_or(false))
@@ -291,7 +400,7 @@ pub fn grep_search(input: &GrepSearchInput) -> io::Result<GrepSearchOutput> {
     let mut content_lines = Vec::new();
     let mut total_matches = 0usize;
 
-    for file_path in collect_search_files(&base_path)? {
+    for file_path in collect_search_files(&base_path, excluded_paths)? {
         if !matches_optional_filters(&file_path, glob_filter.as_ref(), file_type) {
             continue;
         }
@@ -369,13 +478,22 @@ pub fn grep_search(input: &GrepSearchInput) -> io::Result<GrepSearchOutput> {
     })
 }
 
-fn collect_search_files(base_path: &Path) -> io::Result<Vec<PathBuf>> {
+fn collect_search_files(
+    base_path: &Path,
+    excluded_paths: &[String],
+) -> io::Result<Vec<PathBuf>> {
+    if path_is_excluded(base_path, excluded_paths) {
+        return Err(scope_denied_error(base_path));
+    }
     if base_path.is_file() {
         return Ok(vec![base_path.to_path_buf()]);
     }
 
     let mut files = Vec::new();
-    for entry in WalkDir::new(base_path) {
+    for entry in WalkDir::new(base_path)
+        .into_iter()
+        .filter_entry(|entry| !path_is_excluded(entry.path(), excluded_paths))
+    {
         let entry = entry.map_err(|error| io::Error::other(error.to_string()))?;
         if entry.file_type().is_file() {
             files.push(entry.path().to_path_buf());
@@ -445,6 +563,77 @@ fn make_patch(original: &str, updated: &str) -> Vec<StructuredPatchHunk> {
     }]
 }
 
+fn scope_denied_error(path: &Path) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!("session scope excludes path: {}", path.to_string_lossy()),
+    )
+}
+
+fn ensure_path_allowed(path: &Path, excluded_paths: &[String]) -> io::Result<()> {
+    if path_is_excluded(path, excluded_paths) {
+        Err(scope_denied_error(path))
+    } else {
+        Ok(())
+    }
+}
+
+fn path_is_excluded(path: &Path, excluded_paths: &[String]) -> bool {
+    if excluded_paths.is_empty() {
+        return false;
+    }
+
+    let candidate = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+
+    excluded_paths.iter().any(|excluded| {
+        let excluded = PathBuf::from(excluded)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(excluded))
+            .to_string_lossy()
+            .into_owned();
+
+        if cfg!(windows) {
+            let candidate_lower = candidate.to_ascii_lowercase();
+            let excluded_lower = excluded.to_ascii_lowercase();
+            candidate_lower == excluded_lower
+                || candidate_lower
+                    .strip_prefix(&excluded_lower)
+                    .is_some_and(|rest| rest.starts_with('\\') || rest.starts_with('/'))
+        } else {
+            candidate == excluded
+                || candidate
+                    .strip_prefix(&excluded)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        }
+    })
+}
+
+fn glob_walk_root(pattern: &str, base_dir: &Path) -> (PathBuf, bool) {
+    let pattern_path = Path::new(pattern);
+    if !pattern_path.is_absolute() {
+        return (base_dir.to_path_buf(), false);
+    }
+
+    let mut root = PathBuf::new();
+    for component in pattern_path.components() {
+        let text = component.as_os_str().to_string_lossy();
+        if text.contains('*') || text.contains('?') || text.contains('[') {
+            break;
+        }
+        root.push(component.as_os_str());
+    }
+
+    if root.as_os_str().is_empty() {
+        (base_dir.to_path_buf(), true)
+    } else {
+        (root, true)
+    }
+}
+
 fn normalize_path(path: &str) -> io::Result<PathBuf> {
     let candidate = if Path::new(path).is_absolute() {
         PathBuf::from(path)
@@ -481,7 +670,11 @@ fn normalize_path_allow_missing(path: &str) -> io::Result<PathBuf> {
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{edit_file, glob_search, grep_search, read_file, write_file, GrepSearchInput};
+    use super::{
+        edit_file, edit_file_with_exclusions, glob_search, glob_search_with_exclusions,
+        grep_search, grep_search_with_exclusions, read_file, read_file_with_exclusions, write_file,
+        write_file_with_exclusions, GrepSearchInput,
+    };
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()
@@ -514,6 +707,65 @@ mod tests {
     }
 
     #[test]
+    fn scoped_filesystem_operations_block_excluded_paths() {
+        let root = temp_path("scope");
+        let excluded_dir = root.join("excluded");
+        let excluded = excluded_dir.join("secret.txt");
+        std::fs::create_dir_all(&excluded_dir).expect("excluded dir");
+        write_file(excluded.to_string_lossy().as_ref(), "secret").expect("secret file");
+        let exclusions = vec![excluded_dir.to_string_lossy().into_owned()];
+
+        let read_error = read_file_with_exclusions(
+            excluded.to_string_lossy().as_ref(), None, None, &exclusions,
+        ).expect_err("excluded read should fail");
+        assert_eq!(read_error.kind(), std::io::ErrorKind::PermissionDenied);
+
+        let write_error = write_file_with_exclusions(
+            excluded.to_string_lossy().as_ref(), "changed", &exclusions,
+        ).expect_err("excluded write should fail");
+        assert_eq!(write_error.kind(), std::io::ErrorKind::PermissionDenied);
+
+        let edit_error = edit_file_with_exclusions(
+            excluded.to_string_lossy().as_ref(), "secret", "changed", false, &exclusions,
+        ).expect_err("excluded edit should fail");
+        assert_eq!(edit_error.kind(), std::io::ErrorKind::PermissionDenied);
+
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn scoped_glob_and_grep_prune_excluded_directories() {
+        let root = temp_path("scope-search");
+        let allowed = root.join("allowed").join("visible.rs");
+        let excluded = root.join("excluded").join("secret.rs");
+        std::fs::create_dir_all(allowed.parent().expect("allowed parent")).expect("allowed dir");
+        std::fs::create_dir_all(excluded.parent().expect("excluded parent")).expect("excluded dir");
+        write_file(allowed.to_string_lossy().as_ref(), "fn visible() {}").expect("visible");
+        write_file(excluded.to_string_lossy().as_ref(), "fn secret() {}").expect("secret");
+        let exclusions = vec![excluded.parent().expect("excluded parent").to_string_lossy().into_owned()];
+
+        let globbed = glob_search_with_exclusions(
+            "**/*.rs", Some(root.to_string_lossy().as_ref()), &exclusions,
+        ).expect("scoped glob");
+        assert_eq!(globbed.num_files, 1);
+        assert!(globbed.filenames[0].ends_with("visible.rs"));
+
+        let grep_input = GrepSearchInput {
+            pattern: String::from("secret"),
+            path: Some(root.to_string_lossy().into_owned()),
+            glob: Some(String::from("**/*.rs")),
+            output_mode: Some(String::from("files_with_matches")),
+            before: None, after: None, context_short: None, context: None,
+            line_numbers: Some(true), case_insensitive: Some(false), file_type: None,
+            head_limit: Some(10), offset: Some(0), multiline: Some(false),
+            session_excluded_paths: exclusions.clone(),
+        };
+        let grep_output = grep_search_with_exclusions(&grep_input, &exclusions).expect("scoped grep");
+        assert_eq!(grep_output.num_files, 0);
+
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+    #[test]
     fn globs_and_greps_directory() {
         let dir = temp_path("search-dir");
         std::fs::create_dir_all(&dir).expect("directory should be created");
@@ -543,6 +795,7 @@ mod tests {
             head_limit: Some(10),
             offset: Some(0),
             multiline: Some(false),
+            session_excluded_paths: Vec::new(),
         })
         .expect("grep should succeed");
         assert!(grep_output.content.unwrap_or_default().contains("hello"));
