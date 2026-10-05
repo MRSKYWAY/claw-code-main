@@ -1,5 +1,6 @@
 mod init;
 mod input;
+mod memory;
 mod render;
 
 use std::collections::BTreeSet;
@@ -1091,9 +1092,9 @@ fn run_resume_command(
             session: session.clone(),
             message: Some(render_config_report(section.as_deref())?),
         }),
-        SlashCommand::Memory => Ok(ResumeCommandOutcome {
+        SlashCommand::Memory { args } => Ok(ResumeCommandOutcome {
             session: session.clone(),
-            message: Some(render_memory_report()?),
+            message: Some(memory::render(args.as_deref())?),
         }),
         SlashCommand::Init => Ok(ResumeCommandOutcome {
             session: session.clone(),
@@ -1324,10 +1325,24 @@ impl LiveCli {
             TerminalRenderer::new().color_theme(),
             &mut stdout,
         )?;
+        let mut turn_system_prompt = self.system_prompt.clone();
+        match memory::context_for(input) {
+            Ok(Some(context)) => turn_system_prompt.push(context),
+            Ok(None) => {}
+            Err(error) => eprintln!("warning: learned memory unavailable: {error}"),
+        }
+        self.runtime.set_system_prompt(turn_system_prompt);
+
         let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
         let result = self.runtime.run_turn(input, Some(&mut permission_prompter));
+        self.runtime.set_system_prompt(self.system_prompt.clone());
+
         match result {
-            Ok(_) => {
+            Ok(summary) => {
+                let learning = memory::learn_and_save(input, &summary).unwrap_or_else(|error| {
+                    eprintln!("warning: learned memory could not be saved: {error}");
+                    runtime::LearningReport::default()
+                });
                 for exclusion in self
                     .runtime
                     .session()
@@ -1336,6 +1351,12 @@ impl LiveCli {
                     .filter(|path| !exclusions_before.contains(path))
                 {
                     println!("✓ Session scope · excluding {exclusion}");
+                }
+                if learning.created > 0 || learning.reinforced > 0 {
+                    println!(
+                        "🧠 Learned · {} new, {} reinforced",
+                        learning.created, learning.reinforced
+                    );
                 }
                 spinner.finish(
                     "✨ Done",
@@ -1370,10 +1391,16 @@ impl LiveCli {
 
     fn run_prompt_json(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {
         let session = self.runtime.session().clone();
+        let mut system_prompt = self.system_prompt.clone();
+        match memory::context_for(input) {
+            Ok(Some(context)) => system_prompt.push(context),
+            Ok(None) => {}
+            Err(error) => eprintln!("warning: learned memory unavailable: {error}"),
+        }
         let mut runtime = build_runtime(
             session,
             self.model.clone(),
-            self.system_prompt.clone(),
+            system_prompt,
             true,
             false,
             self.allowed_tools.clone(),
@@ -1393,6 +1420,9 @@ impl LiveCli {
                 "tool_uses": collect_tool_uses(&summary),
                 "tool_results": collect_tool_results(&summary),
                 "session_excluded_paths": self.runtime.session().excluded_paths(),
+                "learned_memory_created": learning.created,
+                "learned_memory_reinforced": learning.reinforced,
+                "learned_memory_errors_observed": learning.errors_observed,
                 "usage": {
                     "input_tokens": summary.usage.input_tokens,
                     "output_tokens": summary.usage.output_tokens,
@@ -1465,8 +1495,8 @@ impl LiveCli {
                 Self::print_config(section.as_deref())?;
                 false
             }
-            SlashCommand::Memory => {
-                Self::print_memory()?;
+            SlashCommand::Memory { args } => {
+                Self::print_memory(args.as_deref())?;
                 false
             }
             SlashCommand::Init => {
@@ -1726,8 +1756,12 @@ impl LiveCli {
         Ok(())
     }
 
-    fn print_memory() -> Result<(), Box<dyn std::error::Error>> {
-        println!("{}", render_memory_report()?);
+    fn print_memory(args: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+        if args.is_some_and(|value| value.trim() == "instructions") {
+            println!("{}", render_instruction_memory_report()?);
+        } else {
+            println!("{}", memory::render(args)?);
+        }
         Ok(())
     }
 
@@ -2415,7 +2449,7 @@ fn render_config_report(section: Option<&str>) -> Result<String, Box<dyn std::er
     ))
 }
 
-fn render_memory_report() -> Result<String, Box<dyn std::error::Error>> {
+fn render_instruction_memory_report() -> Result<String, Box<dyn std::error::Error>> {
     let cwd = env::current_dir()?;
     let project_context = ProjectContext::discover(&cwd, DEFAULT_DATE)?;
     let mut lines = vec![format!(
@@ -4971,7 +5005,7 @@ mod tests {
 
     #[test]
     fn memory_report_uses_sectioned_layout() {
-        let report = render_memory_report().expect("memory report should render");
+        let report = render_instruction_memory_report().expect("memory report should render");
         assert!(report.contains("Memory"));
         assert!(report.contains("Working directory"));
         assert!(report.contains("Instruction files"));
@@ -5052,8 +5086,18 @@ mod tests {
                 section: Some("env".to_string())
             })
         );
-        assert_eq!(SlashCommand::parse("/memory"), Some(SlashCommand::Memory));
+        assert_eq!(
+            SlashCommand::parse("/memory"),
+            Some(SlashCommand::Memory { args: None })
+        );
         assert_eq!(SlashCommand::parse("/init"), Some(SlashCommand::Init));
+    }
+
+    #[test]
+    fn memory_command_reports_learned_memory() {
+        let rendered = memory::render(None).expect("memory report should render");
+        assert!(rendered.contains("Learned memory"));
+        assert!(rendered.contains("project-local"));
     }
 
     #[test]
