@@ -169,8 +169,8 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     SlashCommandSpec {
         name: "memory",
         aliases: &[],
-        summary: "Inspect loaded Claw instruction memory files",
-        argument_hint: None,
+        summary: "Inspect or manage learned Claw memory",
+        argument_hint: Some("[list|search <query>|forget <id>|clear --confirm]"),
         resume_supported: true,
         category: SlashCommandCategory::Workspace,
     },
@@ -381,7 +381,9 @@ pub enum SlashCommand {
     Config {
         section: Option<String>,
     },
-    Memory,
+    Memory {
+        args: Option<String>,
+    },
     Init,
     Diff,
     Version,
@@ -474,7 +476,9 @@ impl SlashCommand {
             "config" => Self::Config {
                 section: parts.next().map(ToOwned::to_owned),
             },
-            "memory" => Self::Memory,
+            "memory" => Self::Memory {
+                args: remainder_after_command(trimmed, command),
+            },
             "init" => Self::Init,
             "diff" => Self::Diff,
             "version" => Self::Version,
@@ -2301,7 +2305,10 @@ mod tests {
                 section: Some("env".to_string())
             })
         );
-        assert_eq!(SlashCommand::parse("/memory"), Some(SlashCommand::Memory));
+        assert_eq!(
+            SlashCommand::parse("/memory"),
+            Some(SlashCommand::Memory { args: None })
+        );
         assert_eq!(SlashCommand::parse("/init"), Some(SlashCommand::Init));
         assert_eq!(SlashCommand::parse("/diff"), Some(SlashCommand::Diff));
         assert_eq!(SlashCommand::parse("/version"), Some(SlashCommand::Version));
