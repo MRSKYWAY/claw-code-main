@@ -1304,6 +1304,7 @@ impl LiveCli {
     }
 
     fn run_turn(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let exclusions_before = self.runtime.session().excluded_paths().to_vec();
         let mut spinner = Spinner::new();
         let mut stdout = io::stdout();
         spinner.tick(
@@ -1315,6 +1316,15 @@ impl LiveCli {
         let result = self.runtime.run_turn(input, Some(&mut permission_prompter));
         match result {
             Ok(_) => {
+                for exclusion in self
+                    .runtime
+                    .session()
+                    .excluded_paths()
+                    .iter()
+                    .filter(|path| !exclusions_before.contains(path))
+                {
+                    println!("✓ Session scope · excluding {exclusion}");
+                }
                 spinner.finish(
                     "✨ Done",
                     TerminalRenderer::new().color_theme(),
@@ -1370,6 +1380,7 @@ impl LiveCli {
                 "iterations": summary.iterations,
                 "tool_uses": collect_tool_uses(&summary),
                 "tool_results": collect_tool_results(&summary),
+                "session_excluded_paths": runtime.session().excluded_paths(),
                 "usage": {
                     "input_tokens": summary.usage.input_tokens,
                     "output_tokens": summary.usage.output_tokens,
