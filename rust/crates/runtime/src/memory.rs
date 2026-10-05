@@ -554,10 +554,14 @@ fn atomic_temp_path(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{MemoryKind, MemoryScope, MemoryStore};
-    use crate::{ConversationMessage, ContentBlock, StaticToolExecutor, TurnSummary, UsageTracker};
+    use crate::{ConversationMessage, ContentBlock, TurnSummary, UsageTracker};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_path() -> std::path::PathBuf {
-        let nanos = super::now_epoch_secs();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
         std::env::temp_dir().join(format!("claw-memory-{nanos}.json"))
     }
 
