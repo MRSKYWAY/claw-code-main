@@ -11,6 +11,7 @@ mod json;
 mod mcp;
 mod mcp_client;
 mod mcp_results;
+mod memory;
 mod mcp_stdio;
 mod oauth;
 mod permissions;
@@ -66,6 +67,7 @@ pub use mcp_client::{
     McpRemoteTransport, McpSdkTransport, McpStdioTransport,
 };
 pub use mcp_results::McpToolOutput;
+pub use memory::{LearningReport, MemoryEntry, MemoryError, MemoryKind, MemoryScope, MemorySearchResult, MemoryStore};
 pub use mcp_stdio::{
     spawn_mcp_stdio_process, JsonRpcError, JsonRpcId, JsonRpcRequest, JsonRpcResponse,
     ManagedMcpTool, McpInitializeClientInfo, McpInitializeParams, McpInitializeResult,
