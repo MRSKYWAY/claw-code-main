@@ -49,6 +49,8 @@ pub struct ConversationMessage {
 pub struct Session {
     pub version: u32,
     pub messages: Vec<ConversationMessage>,
+    #[serde(default)]
+    pub excluded_paths: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -88,7 +90,26 @@ impl Session {
         Self {
             version: 1,
             messages: Vec::new(),
+            excluded_paths: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn excluded_paths(&self) -> &[String] {
+        &self.excluded_paths
+    }
+
+    pub fn add_excluded_path(&mut self, path: impl Into<String>) -> bool {
+        let path = path.into();
+        if self.excluded_paths.iter().any(|existing| existing == &path) {
+            return false;
+        }
+        self.excluded_paths.push(path);
+        true
+    }
+
+    pub fn clear_excluded_paths(&mut self) {
+        self.excluded_paths.clear();
     }
 
     pub fn save_to_path(&self, path: impl AsRef<Path>) -> Result<(), SessionError> {
@@ -145,6 +166,16 @@ impl Session {
                     .collect(),
             ),
         );
+        object.insert(
+            "excluded_paths".to_string(),
+            JsonValue::Array(
+                self.excluded_paths
+                    .iter()
+                    .cloned()
+                    .map(JsonValue::String)
+                    .collect(),
+            ),
+        );
         JsonValue::Object(object)
     }
 
@@ -165,7 +196,22 @@ impl Session {
             .iter()
             .map(ConversationMessage::from_json)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { version, messages })
+        let excluded_paths = object
+            .get("excluded_paths")
+            .and_then(JsonValue::as_array)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter_map(JsonValue::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Self {
+            version,
+            messages,
+            excluded_paths,
+        })
     }
 }
 
@@ -458,6 +504,7 @@ mod tests {
         session.messages.push(ConversationMessage::tool_result(
             "tool-1", "bash", "hi", false,
         ));
+        session.add_excluded_path("C:\\workspace\\private");
 
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
