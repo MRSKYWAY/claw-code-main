@@ -1,6 +1,6 @@
 use std::env;
 
-use runtime::{LearningReport, MemoryEntry, MemoryError, MemoryKind, MemoryScope, MemoryStore, TurnSummary};
+use runtime::{LearningReport, MemoryEntry, MemoryError, MemoryKind, MemoryStore, TurnSummary};
 
 const MEMORY_FILE_NAME: &str = "memory.json";
 const MAX_REPORT_ENTRIES: usize = 40;
@@ -146,24 +146,6 @@ fn format_memory_entry(entry: &MemoryEntry) -> String {
 
 fn memory_kind_label(kind: MemoryKind) -> &'static str {
     kind.as_str()
-}
-
-#[allow(dead_code)]
-fn memory_scope_label(scope: MemoryScope) -> &'static str {
-    scope.as_str()
-}
-
-#[allow(dead_code)]
-fn format_learning_report(report: LearningReport) -> String {
-    format!(
-        "learned {} new memories, reinforced {} existing memories, observed {} tool errors",
-        report.created, report.reinforced, report.errors_observed
-    )
-}
-
-#[allow(dead_code)]
-fn format_memory_error(error: &MemoryError) -> String {
-    error.to_string()
 }
 
 #[cfg(test)]
