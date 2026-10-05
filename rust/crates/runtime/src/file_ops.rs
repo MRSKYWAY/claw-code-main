@@ -110,6 +110,8 @@ pub struct GrepSearchInput {
     pub head_limit: Option<usize>,
     pub offset: Option<usize>,
     pub multiline: Option<bool>,
+    #[serde(default)]
+    pub session_excluded_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -742,6 +744,7 @@ mod tests {
             head_limit: Some(10),
             offset: Some(0),
             multiline: Some(false),
+            session_excluded_paths: Vec::new(),
         })
         .expect("grep should succeed");
         assert!(grep_output.content.unwrap_or_default().contains("hello"));
