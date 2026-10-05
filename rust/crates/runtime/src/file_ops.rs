@@ -682,7 +682,11 @@ fn normalize_path_allow_missing(path: &str) -> io::Result<PathBuf> {
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{edit_file, glob_search, grep_search, read_file, write_file, GrepSearchInput};
+    use super::{
+        edit_file, edit_file_with_exclusions, glob_search, glob_search_with_exclusions,
+        grep_search, grep_search_with_exclusions, read_file, read_file_with_exclusions, write_file,
+        write_file_with_exclusions, GrepSearchInput,
+    };
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         let unique = SystemTime::now()
@@ -712,6 +716,107 @@ mod tests {
         let output = edit_file(path.to_string_lossy().as_ref(), "alpha", "omega", true)
             .expect("edit should succeed");
         assert!(output.replace_all);
+    }
+
+    #[test]
+    fn scoped_filesystem_operations_block_excluded_paths() {
+        let root = temp_path("scope");
+        let allowed = root.join("allowed.txt");
+        let excluded_dir = root.join("excluded");
+        let excluded = excluded_dir.join("secret.txt");
+        std::fs::create_dir_all(&excluded_dir).expect("excluded directory");
+        write_file(allowed.to_string_lossy().as_ref(), "allowed").expect("allowed file");
+        write_file(excluded.to_string_lossy().as_ref(), "secret").expect("secret file");
+        let exclusions = vec![excluded_dir.to_string_lossy().into_owned()];
+
+        let read_error = read_file_with_exclusions(
+            excluded.to_string_lossy().as_ref(),
+            None,
+            None,
+            &exclusions,
+        )
+        .expect_err("excluded read should fail");
+        assert_eq!(read_error.kind(), std::io::ErrorKind::PermissionDenied);
+
+        let write_error = write_file_with_exclusions(
+            excluded.to_string_lossy().as_ref(),
+            "changed",
+            &exclusions,
+        )
+        .expect_err("excluded write should fail");
+        assert_eq!(write_error.kind(), std::io::ErrorKind::PermissionDenied);
+
+        let edit_error = edit_file_with_exclusions(
+            excluded.to_string_lossy().as_ref(),
+            "secret",
+            "changed",
+            false,
+            &exclusions,
+        )
+        .expect_err("excluded edit should fail");
+        assert_eq!(edit_error.kind(), std::io::ErrorKind::PermissionDenied);
+
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn scoped_glob_and_grep_prune_excluded_directories() {
+        let root = temp_path("scope-search");
+        let allowed = root.join("allowed").join("visible.rs");
+        let excluded = root.join("excluded").join("secret.rs");
+        std::fs::create_dir_all(allowed.parent().expect("allowed parent")).expect("allowed dir");
+        std::fs::create_dir_all(excluded.parent().expect("excluded parent")).expect("excluded dir");
+        write_file(
+            allowed.to_string_lossy().as_ref(),
+            "fn visible() {}",
+        )
+        .expect("visible file");
+        write_file(
+            excluded.to_string_lossy().as_ref(),
+            "fn secret() {}",
+        )
+        .expect("secret file");
+        let exclusions = vec![
+            excluded
+                .parent()
+                .expect("excluded parent")
+                .to_string_lossy()
+                .into_owned(),
+        ];
+
+        let globbed = glob_search_with_exclusions(
+            "**/*.rs",
+            Some(root.to_string_lossy().as_ref()),
+            &exclusions,
+        )
+        .expect("scoped glob should succeed");
+        assert_eq!(globbed.num_files, 1);
+        assert!(globbed.filenames[0].ends_with("visible.rs"));
+
+        let grep_output = grep_search_with_exclusions(
+            &GrepSearchInput {
+                pattern: String::from("secret"),
+                path: Some(root.to_string_lossy().into_owned()),
+                glob: Some(String::from("**/*.rs")),
+                output_mode: Some(String::from("files_with_matches")),
+                before: None,
+                after: None,
+                context_short: None,
+                context: None,
+                line_numbers: Some(true),
+                case_insensitive: Some(false),
+                file_type: None,
+                head_limit: Some(10),
+                offset: Some(0),
+                multiline: Some(false),
+                session_excluded_paths: exclusions.clone(),
+            },
+            &exclusions,
+        )
+        .expect("scoped grep should succeed");
+        assert_eq!(grep_output.num_files, 0);
+
+        std::fs::remove_dir_all(&root).expect("cleanup");
     }
 
     #[test]
