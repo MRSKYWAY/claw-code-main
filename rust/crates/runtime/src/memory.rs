@@ -456,15 +456,18 @@ impl MemoryStore {
 }
 
 fn collect_tool_names(messages: &[ConversationMessage]) -> Vec<String> {
-    let mut names = BTreeSet::new();
+    let mut names = Vec::new();
+    let mut seen = BTreeSet::new();
     for message in messages {
         for block in &message.blocks {
             if let ContentBlock::ToolResult { tool_name, .. } = block {
-                names.insert(tool_name.clone());
+                if seen.insert(tool_name.clone()) {
+                    names.push(tool_name.clone());
+                }
             }
         }
     }
-    names.into_iter().collect()
+    names
 }
 
 fn collect_tool_errors(messages: &[ConversationMessage]) -> Vec<(String, String)> {
