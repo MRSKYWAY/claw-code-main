@@ -213,6 +213,12 @@ where
             }
 
             let mut system_prompt = self.system_prompt.clone();
+            if !self.session.excluded_paths().is_empty() {
+                system_prompt.push(format!(
+                    "SESSION-SCOPED FILESYSTEM EXCLUSIONS: never access, read, write, edit, grep, or glob inside these paths for the rest of this session: {}",
+                    self.session.excluded_paths().join(", ")
+                ));
+            }
             if finalization_mode {
                 system_prompt.push(FINALIZATION_SYSTEM_INSTRUCTION.to_string());
             }
