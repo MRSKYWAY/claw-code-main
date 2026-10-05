@@ -125,6 +125,7 @@ pub fn compact_session(session: &Session, config: CompactionConfig) -> Compactio
         compacted_session: Session {
             version: session.version,
             messages: compacted_messages,
+            excluded_paths: session.excluded_paths.clone(),
         },
         removed_message_count: removed.len(),
     }
@@ -518,6 +519,7 @@ mod tests {
         let session = Session {
             version: 1,
             messages: vec![ConversationMessage::user_text("hello")],
+            ..Session::new()
         };
 
         let result = compact_session(&session, CompactionConfig::default());
