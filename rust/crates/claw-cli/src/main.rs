@@ -1410,6 +1410,12 @@ impl LiveCli {
         let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
         let summary = runtime.run_turn(input, Some(&mut permission_prompter))?;
         self.runtime = runtime;
+
+        let learning = memory::learn_and_save(input, &summary).unwrap_or_else(|error| {
+            eprintln!("warning: learned memory could not be saved: {error}");
+            runtime::LearningReport::default()
+        });
+
         self.persist_session()?;
         println!(
             "{}",
