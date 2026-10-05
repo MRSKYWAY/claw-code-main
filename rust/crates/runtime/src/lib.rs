@@ -18,6 +18,7 @@ mod prompt;
 mod remote;
 pub mod retry;
 pub mod sandbox;
+mod scope;
 mod session;
 mod subagent;
 mod task_history;
@@ -92,6 +93,8 @@ pub use remote::{
     DEFAULT_SESSION_TOKEN_PATH, DEFAULT_SYSTEM_CA_BUNDLE, NO_PROXY_HOSTS, UPSTREAM_PROXY_ENV_KEYS,
 };
 pub use retry::{RetryDisposition, RetryPolicy};
+pub use scope::{apply_user_scope_constraints, normalize_scope_path};
+
 pub use session::{ContentBlock, ConversationMessage, MessageRole, Session, SessionError};
 pub use subagent::{
     global_subagent_registry, SubagentError, SubagentHandle, SubagentRegistry, SubagentSnapshot,
