@@ -612,7 +612,7 @@ fn path_is_excluded(path: &Path, excluded_paths: &[String]) -> bool {
             candidate.eq_ignore_ascii_case(&excluded)
                 || candidate
                     .strip_prefix(&excluded)
-                    .is_some_and(|rest| rest.starts_with(['\\', '/']))
+                    .is_some_and(|rest| rest.starts_with('\\') || rest.starts_with('/'))
         } else {
             candidate == excluded
                 || candidate
@@ -631,7 +631,7 @@ fn glob_walk_root(pattern: &str, base_dir: &Path) -> (PathBuf, bool) {
     let mut root = PathBuf::new();
     for component in pattern_path.components() {
         let text = component.as_os_str().to_string_lossy();
-        if text.contains(['*', '?', '[']) {
+        if text.contains('*') || text.contains('?') || text.contains('[') {
             break;
         }
         root.push(component.as_os_str());
